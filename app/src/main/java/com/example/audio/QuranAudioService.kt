@@ -31,6 +31,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Request
@@ -44,6 +45,9 @@ data class AudioPlaybackState(
     val ayahNumber: Int = 1,
     val totalAyahsInSurah: Int = 7,
     val playbackSpeed: Float = 1.0f,
+    val volume: Float = 1.0f,
+    val currentPositionMs: Long = 0L,
+    val durationMs: Long = 0L,
     val ayahRepeatTarget: Int = 1, // 1, 3, 5, 0 = infinite
     val currentAyahRepeatCount: Int = 1,
     val repeatSurah: Boolean = false,
@@ -66,6 +70,8 @@ class QuranAudioService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var mediaPlayer: MediaPlayer? = null
     private var sleepTimerJob: Job? = null
+    private var progressTickerJob: Job? = null
+    private var currentVolume: Float = 1.0f
 
     override fun onBind(intent: Intent?): IBinder = binder
 
@@ -84,7 +90,35 @@ class QuranAudioService : Service() {
         return START_NOT_STICKY
     }
 
-    fun startForegroundPlayback(surahNumber: Int, ayahNumber: Int, qariName: String) {
+    fun startForegroundPlayback(
+        surahNumber: Int,
+        ayahNumber: Int,
+        qariName: String,
+        isPlaying: Boolean = true,
+    ) {
+        val notification = buildPlaybackNotification(surahNumber, ayahNumber, qariName, isPlaying)
+        startForeground(NOTIFICATION_ID, notification)
+    }
+
+    fun updateNotification(
+        surahNumber: Int,
+        ayahNumber: Int,
+        qariName: String,
+        isPlaying: Boolean,
+    ) {
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(
+            NOTIFICATION_ID,
+            buildPlaybackNotification(surahNumber, ayahNumber, qariName, isPlaying)
+        )
+    }
+
+    private fun buildPlaybackNotification(
+        surahNumber: Int,
+        ayahNumber: Int,
+        qariName: String,
+        isPlaying: Boolean,
+    ): Notification {
         val surahName = QuranMetadata.getSurah(surahNumber).englishName
         val openIntent = PendingIntent.getActivity(
             this,
@@ -92,35 +126,57 @@ class QuranAudioService : Service() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+        val prevIntent = PendingIntent.getService(
+            this,
+            2,
+            Intent(this, QuranAudioService::class.java).apply { action = ACTION_PREV },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val toggleIntent = PendingIntent.getService(
+            this,
+            3,
+            Intent(this, QuranAudioService::class.java).apply { action = ACTION_TOGGLE },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val nextIntent = PendingIntent.getService(
+            this,
+            4,
+            Intent(this, QuranAudioService::class.java).apply { action = ACTION_NEXT },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
         val stopIntent = PendingIntent.getService(
             this,
             1,
             Intent(this, QuranAudioService::class.java).apply { action = ACTION_STOP },
-            PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("HIDAYAH • $surahName ($surahNumber:$ayahNumber)")
             .setContentText("Reciter: $qariName")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(openIntent)
+            .addAction(0, "Prev", prevIntent)
+            .addAction(0, if (isPlaying) "Pause" else "Play", toggleIntent)
+            .addAction(0, "Next", nextIntent)
             .addAction(0, "Stop", stopIntent)
-            .setOngoing(true)
+            .setOngoing(isPlaying)
             .setSilent(true)
             .build()
-
-        startForeground(NOTIFICATION_ID, notification)
     }
 
     fun playSource(
         urlOrPath: String,
         isLocalFile: Boolean,
         speed: Float,
-        onPrepared: () -> Unit,
+        volume: Float,
+        onPrepared: (durationMs: Long) -> Unit,
         onCompleted: () -> Unit,
         onError: (String) -> Unit,
     ) {
         try {
+            progressTickerJob?.cancel()
             mediaPlayer?.release()
+            currentVolume = volume.coerceIn(0f, 1f)
             val mp = MediaPlayer().apply {
                 setAudioAttributes(
                     AudioAttributes.Builder()
@@ -128,23 +184,23 @@ class QuranAudioService : Service() {
                         .setUsage(AudioAttributes.USAGE_MEDIA)
                         .build()
                 )
-                if (isLocalFile) {
-                    setDataSource(urlOrPath)
-                } else {
-                    setDataSource(urlOrPath)
-                }
+                setDataSource(urlOrPath)
                 setOnPreparedListener { player ->
                     try {
                         player.playbackParams = player.playbackParams.setSpeed(speed)
                     } catch (_: Exception) {
                     }
+                    player.setVolume(currentVolume, currentVolume)
                     player.start()
-                    onPrepared()
+                    startProgressTicker()
+                    onPrepared(player.duration.toLong().coerceAtLeast(0L))
                 }
                 setOnCompletionListener {
+                    progressTickerJob?.cancel()
                     onCompleted()
                 }
                 setOnErrorListener { _, what, extra ->
+                    progressTickerJob?.cancel()
                     onError("Audio playback error ($what/$extra)")
                     true
                 }
@@ -157,9 +213,28 @@ class QuranAudioService : Service() {
         }
     }
 
+    private fun startProgressTicker() {
+        progressTickerJob?.cancel()
+        progressTickerJob = serviceScope.launch {
+            while (isActive) {
+                val mp = mediaPlayer
+                if (mp != null) {
+                    try {
+                        val pos = mp.currentPosition.toLong().coerceAtLeast(0L)
+                        val dur = mp.duration.toLong().coerceAtLeast(0L)
+                        AudioPlayerManager.updateProgress(pos, dur)
+                    } catch (_: Exception) {
+                    }
+                }
+                delay(250L)
+            }
+        }
+    }
+
     fun pause() {
         try {
             if (mediaPlayer?.isPlaying == true) mediaPlayer?.pause()
+            progressTickerJob?.cancel()
         } catch (_: Exception) {
         }
     }
@@ -171,8 +246,29 @@ class QuranAudioService : Service() {
                     it.playbackParams = it.playbackParams.setSpeed(speed)
                 } catch (_: Exception) {
                 }
+                it.setVolume(currentVolume, currentVolume)
                 it.start()
+                startProgressTicker()
             }
+        } catch (_: Exception) {
+        }
+    }
+
+    fun seekTo(positionMs: Long) {
+        try {
+            mediaPlayer?.let { mp ->
+                val target = positionMs.toInt().coerceIn(0, mp.duration.coerceAtLeast(0))
+                mp.seekTo(target)
+                AudioPlayerManager.updateProgress(target.toLong(), mp.duration.toLong().coerceAtLeast(0L))
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    fun setVolume(volume: Float) {
+        currentVolume = volume.coerceIn(0f, 1f)
+        try {
+            mediaPlayer?.setVolume(currentVolume, currentVolume)
         } catch (_: Exception) {
         }
     }
@@ -189,6 +285,7 @@ class QuranAudioService : Service() {
     }
 
     fun stopPlayback() {
+        progressTickerJob?.cancel()
         try {
             mediaPlayer?.stop()
             mediaPlayer?.release()
@@ -218,6 +315,7 @@ class QuranAudioService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        progressTickerJob?.cancel()
         mediaPlayer?.release()
         mediaPlayer = null
         serviceScope.cancel()
@@ -268,6 +366,8 @@ object AudioPlayerManager {
             totalAyahsInSurah = meta.ayahCount,
             isBuffering = true,
             isPlaying = false,
+            currentPositionMs = 0L,
+            durationMs = 0L,
             currentAyahRepeatCount = 1,
             errorMessage = null,
         )
@@ -288,10 +388,22 @@ object AudioPlayerManager {
         if (current.isPlaying) {
             service.pause()
             _state.value = current.copy(isPlaying = false)
+            service.updateNotification(current.surahNumber, current.ayahNumber, current.qari.name, false)
         } else {
             service.resume(current.playbackSpeed)
             _state.value = current.copy(isPlaying = true)
+            service.updateNotification(current.surahNumber, current.ayahNumber, current.qari.name, true)
         }
+    }
+
+    fun seekTo(positionMs: Long) {
+        boundService?.seekTo(positionMs)
+    }
+
+    fun setVolume(volume: Float) {
+        val clamped = volume.coerceIn(0f, 1f)
+        _state.value = _state.value.copy(volume = clamped)
+        boundService?.setVolume(clamped)
     }
 
     fun skipNextAyah(context: Context) {
@@ -317,6 +429,9 @@ object AudioPlayerManager {
         val s = _state.value
         if (s.ayahNumber > 1) {
             playAyah(context, s.surahNumber, s.ayahNumber - 1, s.qari)
+        } else if (s.surahNumber > 1) {
+            val prevMeta = QuranMetadata.getSurah(s.surahNumber - 1)
+            playAyah(context, prevMeta.number, prevMeta.ayahCount, s.qari)
         }
     }
 
@@ -359,8 +474,23 @@ object AudioPlayerManager {
         boundService?.stopPlayback()
     }
 
+    internal fun updateProgress(positionMs: Long, durationMs: Long) {
+        val current = _state.value
+        if (current.currentPositionMs != positionMs || current.durationMs != durationMs) {
+            _state.value = current.copy(
+                currentPositionMs = positionMs,
+                durationMs = durationMs.coerceAtLeast(current.durationMs),
+            )
+        }
+    }
+
     internal fun markStopped() {
-        _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+        _state.value = _state.value.copy(
+            isPlaying = false,
+            isBuffering = false,
+            currentPositionMs = 0L,
+            durationMs = 0L,
+        )
     }
 
     internal fun updateSleepRemaining(sec: Int) {
@@ -398,7 +528,7 @@ object AudioPlayerManager {
 
     private fun dispatchCurrentAyahToService(appContext: Context, service: QuranAudioService) {
         val s = _state.value
-        service.startForegroundPlayback(s.surahNumber, s.ayahNumber, s.qari.name)
+        service.startForegroundPlayback(s.surahNumber, s.ayahNumber, s.qari.name, isPlaying = true)
 
         scope.launch {
             val dao = AppDatabase.getInstance(appContext).appDao()
@@ -413,8 +543,14 @@ object AudioPlayerManager {
                 urlOrPath = source,
                 isLocalFile = localFile != null,
                 speed = s.playbackSpeed,
-                onPrepared = {
-                    _state.value = _state.value.copy(isPlaying = true, isBuffering = false, errorMessage = null)
+                volume = s.volume,
+                onPrepared = { durMs ->
+                    _state.value = _state.value.copy(
+                        isPlaying = true,
+                        isBuffering = false,
+                        durationMs = durMs,
+                        errorMessage = null,
+                    )
                 },
                 onCompleted = {
                     handleAyahCompleted(appContext)
@@ -483,4 +619,10 @@ object AudioPlayerManager {
             Result.failure(e)
         }
     }
+
+    suspend fun deleteSurahFiles(context: Context, qariId: String, surahNumber: Int) =
+        withContext(Dispatchers.IO) {
+            val dir = File(context.applicationContext.filesDir, "quran_audio/$qariId/$surahNumber")
+            if (dir.exists()) dir.deleteRecursively()
+        }
 }

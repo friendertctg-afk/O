@@ -59,11 +59,12 @@ import com.example.utils.WallpaperAndAlertUtils
 @Composable
 fun HadithAndLibraryScreen(
     prefs: UserPreferencesState,
+    initialTab: Int = 0,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
     val isBn = prefs.appLanguage == AppLanguage.BENGALI
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedTab by remember(initialTab) { mutableIntStateOf(initialTab.coerceIn(0, 5)) }
     val tabs = listOf("Hadith (9)", "Tafsir", "Stories", "Ramadan & Hajj", "Digital Library", "Quiz & Terms")
 
     Scaffold(

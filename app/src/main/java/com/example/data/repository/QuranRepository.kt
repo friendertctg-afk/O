@@ -8,6 +8,8 @@ import com.example.data.local.CachedTranslationEntity
 import com.example.data.remote.NetworkModule
 import com.example.data.seed.QuranMetadata
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.withContext
@@ -23,6 +25,7 @@ data class AyahDisplayItem(
     val tajweedMarkup: String,
     val transliteration: String,
     val translationText: String,
+    val ruku: Int = 1,
 )
 
 class QuranRepository(
@@ -62,7 +65,127 @@ class QuranRepository(
                     tajweedMarkup = a.tajweedMarkup,
                     transliteration = a.transliteration,
                     translationText = transMap[a.ayahNumber]?.text ?: "",
+                    ruku = a.ruku,
                 )
+            }
+        }
+    }
+
+    fun observePageAyahs(
+        pageNumber: Int,
+        translationEdition: String,
+    ): Flow<List<AyahDisplayItem>> {
+        val clampedPage = pageNumber.coerceIn(1, QuranMetadata.TOTAL_MUSHAF_PAGES)
+        return combine(
+            dao.observePageAyahs(clampedPage),
+            dao.observePageTranslations(clampedPage, translationEdition),
+        ) { ayahs, translations ->
+            val transMap = translations.associateBy { it.surahNumber to it.ayahNumber }
+            ayahs.map { a ->
+                AyahDisplayItem(
+                    surahNumber = a.surahNumber,
+                    ayahNumber = a.ayahNumber,
+                    globalNumber = a.globalNumber,
+                    juz = a.juz,
+                    page = a.page,
+                    uthmaniText = a.uthmaniText,
+                    simpleText = a.simpleText,
+                    tajweedMarkup = a.tajweedMarkup,
+                    transliteration = a.transliteration,
+                    translationText = transMap[a.surahNumber to a.ayahNumber]?.text ?: "",
+                    ruku = a.ruku,
+                )
+            }
+        }
+    }
+
+    suspend fun resolvePageForAyah(surahNumber: Int, ayahNumber: Int): Int =
+        withContext(Dispatchers.IO) {
+            ensureStarterSeeded()
+            dao.getPageForAyah(surahNumber, ayahNumber)
+                ?: QuranMetadata.startPageForSurah(surahNumber)
+        }
+
+    suspend fun loadPageIfNeeded(
+        pageNumber: Int,
+        translationEdition: String,
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        ensureStarterSeeded()
+        val page = pageNumber.coerceIn(1, QuranMetadata.TOTAL_MUSHAF_PAGES)
+        val existingAyahs = dao.getPageAyahs(page)
+        val existingTrans = dao.getPageTranslations(page, translationEdition)
+
+        // Note: Starter seed only partially populates pages 601/602/604; verify full page if Surahs are incomplete
+        val hasAllExistingSurahsComplete = existingAyahs.isNotEmpty() &&
+            (page !in setOf(601, 602, 604) || existingAyahs.size >= 12)
+        val needsArabic = !hasAllExistingSurahsComplete
+        val needsTrans = needsArabic || existingTrans.size < existingAyahs.size
+
+        if (!needsArabic && !needsTrans) {
+            return@withContext Result.success(Unit)
+        }
+
+        return@withContext try {
+            coroutineScope {
+                val uthmaniDef = if (needsArabic) {
+                    async { NetworkModule.quranApi.getPageEdition(page, "quran-uthmani") }
+                } else null
+                val simpleDef = if (needsArabic) {
+                    async { runCatching { NetworkModule.quranApi.getPageEdition(page, "quran-simple") }.getOrNull() }
+                } else null
+                val tajweedDef = if (needsArabic) {
+                    async { runCatching { NetworkModule.quranApi.getPageEdition(page, "quran-tajweed") }.getOrNull() }
+                } else null
+                val transDef = async {
+                    runCatching { NetworkModule.quranApi.getPageEdition(page, translationEdition) }.getOrNull()
+                }
+
+                if (needsArabic) {
+                    val uthmaniAyahs = uthmaniDef?.await()?.data?.ayahs ?: emptyList()
+                    if (uthmaniAyahs.isEmpty()) {
+                        return@coroutineScope Result.failure(IllegalStateException("Empty Mushaf page $page response"))
+                    }
+                    val simpleAyahs = simpleDef?.await()?.data?.ayahs.orEmpty().associateBy { it.number }
+                    val tajweedAyahs = tajweedDef?.await()?.data?.ayahs.orEmpty().associateBy { it.number }
+
+                    val entities = uthmaniAyahs.map { u ->
+                        val sNum = u.surah?.number ?: 1
+                        CachedAyahEntity(
+                            surahNumber = sNum,
+                            ayahNumber = u.numberInSurah,
+                            globalNumber = u.number,
+                            juz = u.juz,
+                            page = u.page,
+                            uthmaniText = u.text,
+                            simpleText = simpleAyahs[u.number]?.text ?: u.text,
+                            tajweedMarkup = tajweedAyahs[u.number]?.text ?: u.text,
+                            transliteration = "",
+                            ruku = u.ruku,
+                        )
+                    }
+                    dao.insertAyahs(entities)
+                }
+
+                val transAyahs = transDef.await()?.data?.ayahs.orEmpty()
+                if (transAyahs.isNotEmpty()) {
+                    val transEntities = transAyahs.map { t ->
+                        CachedTranslationEntity(
+                            surahNumber = t.surah?.number ?: 1,
+                            ayahNumber = t.numberInSurah,
+                            edition = translationEdition,
+                            text = t.text,
+                        )
+                    }
+                    dao.insertTranslations(transEntities)
+                }
+                Result.success(Unit)
+            }
+        } catch (e: Exception) {
+            Log.e("QuranRepository", "Failed to load Mushaf page $page", e)
+            if (existingAyahs.isNotEmpty()) {
+                Result.success(Unit)
+            } else {
+                Result.failure(e)
             }
         }
     }
@@ -114,6 +237,7 @@ class QuranRepository(
                         simpleText = simple.getOrNull(idx)?.text ?: u.text,
                         tajweedMarkup = tajweed.getOrNull(idx)?.text ?: u.text,
                         transliteration = "",
+                        ruku = u.ruku,
                     )
                 }
                 dao.insertAyahs(cached)
@@ -143,17 +267,39 @@ class QuranRepository(
         }
     }
 
+    suspend fun prefetchSurahsForOffline(
+        surahNumbers: List<Int>,
+        translationEdition: String,
+        onProgress: (done: Int, total: Int, currentName: String) -> Unit,
+    ): Result<Int> = withContext(Dispatchers.IO) {
+        ensureStarterSeeded()
+        var successCount = 0
+        val total = surahNumbers.size
+        try {
+            surahNumbers.forEachIndexed { idx, sNum ->
+                val meta = QuranMetadata.getSurah(sNum)
+                onProgress(idx, total, meta.englishName)
+                val res = loadSurahIfNeeded(sNum, translationEdition)
+                if (res.isSuccess) successCount++
+            }
+            onProgress(total, total, "Complete")
+            Result.success(successCount)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun searchVerses(query: String, edition: String): List<AyahDisplayItem> =
         withContext(Dispatchers.IO) {
             ensureStarterSeeded()
             val trimmed = query.trim()
             if (trimmed.isBlank()) return@withContext emptyList()
 
-            // Support direct "Surah:Ayah" lookup e.g. "2:255"
+            // 1. Direct "Surah:Ayah" lookup e.g. "2:255"
             val colonParts = trimmed.split(":")
             if (colonParts.size == 2) {
-                val s = colonParts[0].toIntOrNull()
-                val a = colonParts[1].toIntOrNull()
+                val s = colonParts[0].trim().toIntOrNull()
+                val a = colonParts[1].trim().toIntOrNull()
                 if (s != null && s in 1..114 && a != null && a >= 1) {
                     loadSurahIfNeeded(s, edition)
                     val ayah = dao.getSurahAyahs(s).firstOrNull { it.ayahNumber == a }
@@ -171,30 +317,111 @@ class QuranRepository(
                                 tajweedMarkup = ayah.tajweedMarkup,
                                 transliteration = ayah.transliteration,
                                 translationText = trans?.text ?: "",
+                                ruku = ayah.ruku,
                             )
                         )
                     }
                 }
             }
 
-            // Local cached search first + remote keyword search
+            // 2. Direct Mushaf Page lookup e.g. "page 255", "p.1", "p 604"
+            val pageRegex = Regex("^(?:page|p\\.?|صفحة)\\s*(\\d{1,3})$", RegexOption.IGNORE_CASE)
+            pageRegex.matchEntire(trimmed)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { pNum ->
+                if (pNum in 1..QuranMetadata.TOTAL_MUSHAF_PAGES) {
+                    loadPageIfNeeded(pNum, edition)
+                    val pAyahs = dao.getPageAyahs(pNum)
+                    val pTrans = dao.getPageTranslations(pNum, edition).associateBy { it.surahNumber to it.ayahNumber }
+                    if (pAyahs.isNotEmpty()) {
+                        return@withContext pAyahs.map { ayah ->
+                            AyahDisplayItem(
+                                surahNumber = ayah.surahNumber,
+                                ayahNumber = ayah.ayahNumber,
+                                globalNumber = ayah.globalNumber,
+                                juz = ayah.juz,
+                                page = ayah.page,
+                                uthmaniText = ayah.uthmaniText,
+                                simpleText = ayah.simpleText,
+                                tajweedMarkup = ayah.tajweedMarkup,
+                                transliteration = ayah.transliteration,
+                                translationText = pTrans[ayah.surahNumber to ayah.ayahNumber]?.text ?: "",
+                                ruku = ayah.ruku,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 3. Curated Topic lookup e.g. "patience", "mercy", "sabr", "tawakkul"
+            val matchingTopics = QuranMetadata.topics.filter {
+                it.id.contains(trimmed, ignoreCase = true) ||
+                    it.title.contains(trimmed, ignoreCase = true) ||
+                    it.subtitle.contains(trimmed, ignoreCase = true)
+            }
+            if (matchingTopics.isNotEmpty()) {
+                val results = mutableListOf<AyahDisplayItem>()
+                for (topic in matchingTopics.take(2)) {
+                    for ((sNum, aNum) in topic.references) {
+                        loadSurahIfNeeded(sNum, edition)
+                        val ayah = dao.getSurahAyahs(sNum).firstOrNull { it.ayahNumber == aNum }
+                        val trans = dao.getTranslations(sNum, edition).firstOrNull { it.ayahNumber == aNum }
+                        if (ayah != null) {
+                            results += AyahDisplayItem(
+                                surahNumber = ayah.surahNumber,
+                                ayahNumber = ayah.ayahNumber,
+                                globalNumber = ayah.globalNumber,
+                                juz = ayah.juz,
+                                page = ayah.page,
+                                uthmaniText = ayah.uthmaniText,
+                                simpleText = ayah.simpleText,
+                                tajweedMarkup = ayah.tajweedMarkup,
+                                transliteration = ayah.transliteration,
+                                translationText = trans?.text ?: "",
+                                ruku = ayah.ruku,
+                            )
+                        }
+                    }
+                }
+                if (results.isNotEmpty()) return@withContext results
+            }
+
+            // 4. Local Arabic + cached translation search
+            val localArabic = dao.searchCachedArabic(trimmed).map { a ->
+                val t = dao.getTranslations(a.surahNumber, edition).firstOrNull { it.ayahNumber == a.ayahNumber }
+                AyahDisplayItem(
+                    surahNumber = a.surahNumber,
+                    ayahNumber = a.ayahNumber,
+                    globalNumber = a.globalNumber,
+                    juz = a.juz,
+                    page = a.page,
+                    uthmaniText = a.uthmaniText,
+                    simpleText = a.simpleText,
+                    tajweedMarkup = a.tajweedMarkup,
+                    transliteration = a.transliteration,
+                    translationText = t?.text ?: "",
+                    ruku = a.ruku,
+                )
+            }
+            if (localArabic.isNotEmpty()) return@withContext localArabic
+
             val localMatches = dao.searchCachedTranslations(trimmed).map { t ->
                 val a = dao.getSurahAyahs(t.surahNumber).firstOrNull { it.ayahNumber == t.ayahNumber }
                 AyahDisplayItem(
                     surahNumber = t.surahNumber,
                     ayahNumber = t.ayahNumber,
                     globalNumber = a?.globalNumber ?: QuranMetadata.globalAyahNumber(t.surahNumber, t.ayahNumber),
-                    juz = a?.juz ?: 1,
-                    page = a?.page ?: 1,
+                    juz = a?.juz ?: QuranMetadata.getSurah(t.surahNumber).startJuz,
+                    page = a?.page ?: QuranMetadata.startPageForSurah(t.surahNumber),
                     uthmaniText = a?.uthmaniText ?: "",
                     simpleText = a?.simpleText ?: "",
                     tajweedMarkup = a?.tajweedMarkup ?: "",
                     transliteration = a?.transliteration ?: "",
                     translationText = t.text,
+                    ruku = a?.ruku ?: 1,
                 )
             }
             if (localMatches.isNotEmpty()) return@withContext localMatches
 
+            // 5. Remote AlQuran Cloud keyword search
             return@withContext try {
                 val remote = NetworkModule.quranApi.searchQuran(trimmed, edition)
                 remote.data?.matches?.take(25)?.map { m ->
@@ -203,7 +430,7 @@ class QuranRepository(
                         ayahNumber = m.numberInSurah,
                         globalNumber = m.number,
                         juz = QuranMetadata.getSurah(m.surah.number).startJuz,
-                        page = 1,
+                        page = QuranMetadata.startPageForSurah(m.surah.number),
                         uthmaniText = "",
                         simpleText = "",
                         tajweedMarkup = "",

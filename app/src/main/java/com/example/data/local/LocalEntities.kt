@@ -17,6 +17,7 @@ data class CachedAyahEntity(
     val simpleText: String,
     val tajweedMarkup: String,
     val transliteration: String = "",
+    val ruku: Int = 1,
 )
 
 @Entity(
@@ -38,6 +39,14 @@ data class BookmarkEntity(
     val surahNumber: Int,
     val ayahNumber: Int,
     val surahName: String,
+    val note: String = "",
+    val updatedAtMs: Long = System.currentTimeMillis(),
+)
+
+@Entity(tableName = "page_bookmarks")
+data class PageBookmarkEntity(
+    @PrimaryKey val pageNumber: Int,
+    val title: String,
     val note: String = "",
     val updatedAtMs: Long = System.currentTimeMillis(),
 )

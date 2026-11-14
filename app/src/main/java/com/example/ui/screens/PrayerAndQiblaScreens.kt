@@ -85,6 +85,7 @@ import kotlin.math.abs
 fun PrayerTimesScreen(
     prefs: UserPreferencesState,
     prayerState: PrayerUiState,
+    initialTab: Int = 0,
     onSelectCity: (String, Double, Double) -> Unit,
     onRequestGps: () -> Unit,
     onChangeMethod: (Int, Boolean) -> Unit,
@@ -92,7 +93,7 @@ fun PrayerTimesScreen(
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedTab by remember(initialTab) { mutableIntStateOf(initialTab.coerceIn(0, 2)) }
     var showCityDialog by remember { mutableStateOf(false) }
     var feedbackMsg by remember { mutableStateOf<String?>(null) }
 

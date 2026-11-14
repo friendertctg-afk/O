@@ -13,6 +13,7 @@ data class SurahMeta(
     val revelationType: String, // "Meccan" or "Medinan"
     val startJuz: Int,
     val startingGlobalAyah: Int,
+    val startPage: Int = 1,
 )
 
 data class JuzMeta(
@@ -23,9 +24,42 @@ data class JuzMeta(
     val startAyah: Int,
     val endSurah: Int,
     val endAyah: Int,
+    val startPage: Int = 1,
+)
+
+data class QuranTopicMeta(
+    val id: String,
+    val title: String,
+    val subtitle: String,
+    val references: List<Pair<Int, Int>>,
 )
 
 object QuranMetadata {
+    const val TOTAL_MUSHAF_PAGES = 604
+
+    // Verified standard 604-page Madani/Hafizi starting pages for Surahs 1..114
+    private val surahStartPages = intArrayOf(
+        1, 2, 50, 77, 106, 128, 151, 177, 187, 208,
+        221, 235, 249, 255, 262, 267, 282, 293, 305, 312,
+        322, 332, 342, 350, 359, 367, 377, 385, 396, 404,
+        411, 415, 418, 428, 434, 440, 446, 453, 458, 467,
+        477, 483, 489, 496, 499, 502, 507, 511, 515, 518,
+        520, 523, 526, 528, 531, 534, 537, 542, 545, 549,
+        551, 553, 554, 556, 558, 560, 562, 564, 566, 568,
+        570, 572, 574, 575, 577, 578, 580, 582, 583, 585,
+        586, 587, 587, 589, 590, 591, 591, 592, 593, 594,
+        595, 595, 596, 596, 597, 597, 598, 598, 599, 599,
+        600, 600, 601, 601, 601, 602, 602, 602, 603, 603,
+        603, 604, 604, 604
+    )
+
+    // Verified standard 604-page starting pages for Juz 1..30
+    private val juzStartPages = intArrayOf(
+        1, 22, 42, 62, 82, 102, 121, 142, 162, 182,
+        201, 222, 242, 262, 282, 302, 322, 342, 362, 382,
+        402, 422, 442, 462, 482, 502, 522, 542, 562, 582
+    )
+
     private val rawSurahs: List<SurahMeta> = buildList {
         val raw = listOf(
             listOf("1", "الفاتحة", "Al-Fatihah", "The Opening", "সূরা আল-ফাতিহা", "7", "Meccan", "1"),
@@ -144,7 +178,8 @@ object QuranMetadata {
             listOf("114", "الناس", "An-Nas", "Mankind", "সূরা আন-নাস", "6", "Meccan", "30"),
         )
         var globalCursor = 1
-        for (row in raw) {
+        for (i in raw.indices) {
+            val row = raw[i]
             val count = row[5].toInt()
             add(
                 SurahMeta(
@@ -157,6 +192,7 @@ object QuranMetadata {
                     revelationType = row[6],
                     startJuz = row[7].toInt(),
                     startingGlobalAyah = globalCursor,
+                    startPage = surahStartPages.getOrElse(i) { 1 },
                 )
             )
             globalCursor += count
@@ -168,42 +204,69 @@ object QuranMetadata {
     fun getSurah(number: Int): SurahMeta =
         surahs.firstOrNull { it.number == number } ?: surahs.first()
 
+    fun getJuz(number: Int): JuzMeta =
+        juzList.firstOrNull { it.number == number } ?: juzList.first()
+
     fun globalAyahNumber(surahNumber: Int, ayahNumber: Int): Int {
         val meta = getSurah(surahNumber)
         return (meta.startingGlobalAyah + ayahNumber - 1).coerceIn(1, 6236)
     }
 
+    fun startPageForSurah(surahNumber: Int): Int =
+        surahStartPages.getOrElse(surahNumber.coerceIn(1, 114) - 1) { 1 }
+
+    fun startPageForJuz(juzNumber: Int): Int =
+        juzStartPages.getOrElse(juzNumber.coerceIn(1, 30) - 1) { 1 }
+
+    fun toArabicIndic(number: Int): String {
+        val digits = charArrayOf('٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩')
+        return number.toString().map { ch ->
+            if (ch in '0'..'9') digits[ch - '0'] else ch
+        }.joinToString("")
+    }
+
+    val topics: List<QuranTopicMeta> = listOf(
+        QuranTopicMeta("patience", "Patience (Sabr)", "Perseverance & Prayer", listOf(2 to 153, 2 to 45, 3 to 200, 103 to 3)),
+        QuranTopicMeta("mercy", "Mercy (Rahmah)", "Allah's forgiveness & compassion", listOf(39 to 53, 21 to 107, 7 to 156, 6 to 54)),
+        QuranTopicMeta("guidance", "Guidance (Hidayah)", "Straight path & light", listOf(1 to 6, 2 to 2, 24 to 35, 17 to 9)),
+        QuranTopicMeta("prayer", "Prayer (Salah)", "Remembrance & devotion", listOf(29 to 45, 2 to 238, 20 to 14, 14 to 40)),
+        QuranTopicMeta("charity", "Charity & Zakat", "Generosity & blessing", listOf(2 to 261, 2 to 274, 9 to 60, 57 to 18)),
+        QuranTopicMeta("gratitude", "Gratitude (Shukr)", "Thankfulness & abundance", listOf(14 to 7, 2 to 152, 31 to 12, 16 to 78)),
+        QuranTopicMeta("parents", "Parents & Family", "Kindness & respect", listOf(17 to 23, 31 to 14, 46 to 15, 25 to 74)),
+        QuranTopicMeta("trust", "Trust in Allah (Tawakkul)", "Reliance & peace of heart", listOf(65 to 3, 13 to 28, 3 to 159, 94 to 5)),
+    )
+
     val juzList: List<JuzMeta> = listOf(
-        JuzMeta(1, "آلم", "Alif Lam Mim", 1, 1, 2, 141),
-        JuzMeta(2, "سيقول", "Sayaqul", 2, 142, 2, 252),
-        JuzMeta(3, "تلك الرسل", "Tilkal Rusul", 2, 253, 3, 92),
-        JuzMeta(4, "لن تنالوا", "Lan Tana Lu", 3, 93, 4, 23),
-        JuzMeta(5, "والمحصنات", "Wal Muhsanat", 4, 24, 4, 147),
-        JuzMeta(6, "لا يحب الله", "La Yuhibbullah", 4, 148, 5, 81),
-        JuzMeta(7, "وإذا سمعوا", "Wa Idha Sami'u", 5, 82, 6, 110),
-        JuzMeta(8, "ولو أننا", "Wa Law Annana", 6, 111, 7, 87),
-        JuzMeta(9, "قال الملأ", "Qalal Mala'u", 7, 88, 8, 40),
-        JuzMeta(10, "واعلموا", "Wa'lamu", 8, 41, 9, 92),
-        JuzMeta(11, "يعتذرون", "Ya'tadhirun", 9, 93, 11, 5),
-        JuzMeta(12, "وما من دابة", "Wa Ma Min Dabbah", 11, 6, 12, 52),
-        JuzMeta(13, "وما أبرئ", "Wa Ma Ubarri'u", 12, 53, 14, 52),
-        JuzMeta(14, "ربما", "Rubama", 15, 1, 16, 128),
-        JuzMeta(15, "سبحان الذي", "Subhanalladhi", 17, 1, 18, 74),
-        JuzMeta(16, "قال ألم", "Qal Alam", 18, 75, 20, 135),
-        JuzMeta(17, "اقترب للناس", "Iqtaraba", 21, 1, 22, 78),
-        JuzMeta(18, "قد أفلح", "Qad Aflaha", 23, 1, 25, 20),
-        JuzMeta(19, "وقال الذين", "Wa Qalalladhina", 25, 21, 27, 55),
-        JuzMeta(20, "أمن خلق", "A'man Khalaqa", 27, 56, 29, 45),
-        JuzMeta(21, "اتل ما أوحي", "Utlu Ma Uhiya", 29, 46, 33, 30),
-        JuzMeta(22, "ومن يقنت", "Wa Man Yaqnut", 33, 31, 36, 27),
-        JuzMeta(23, "وما لي", "Wa Mali", 36, 28, 39, 31),
-        JuzMeta(24, "فمن أظلم", "Faman Azlamu", 39, 32, 41, 46),
-        JuzMeta(25, "إليه يرد", "Ilayhi Yuraddu", 41, 47, 45, 37),
-        JuzMeta(26, "حم", "Ha Mim", 46, 1, 51, 30),
-        JuzMeta(27, "قال فما خطبكم", "Qala Fama Khatbukum", 51, 31, 57, 29),
-        JuzMeta(28, "قد سمع الله", "Qad Sami'Allah", 58, 1, 66, 12),
-        JuzMeta(29, "تبارك الذي", "Tabarakalladhi", 67, 1, 77, 50),
-        JuzMeta(30, "عم يتساءلون", "Amma Yatasa'alun", 78, 1, 114, 6),
+        JuzMeta(1, "آلم", "Alif Lam Mim", 1, 1, 2, 141, juzStartPages[0]),
+        JuzMeta(2, "سيقول", "Sayaqul", 2, 142, 2, 252, juzStartPages[1]),
+        JuzMeta(3, "تلك الرسل", "Tilkal Rusul", 2, 253, 3, 92, juzStartPages[2]),
+        JuzMeta(4, "لن تنالوا", "Lan Tana Lu", 3, 93, 4, 23, juzStartPages[3]),
+        JuzMeta(5, "والمحصنات", "Wal Muhsanat", 4, 24, 4, 147, juzStartPages[4]),
+        JuzMeta(6, "لا يحب الله", "La Yuhibbullah", 4, 148, 5, 81, juzStartPages[5]),
+        JuzMeta(7, "وإذا سمعوا", "Wa Idha Sami'u", 5, 82, 6, 110, juzStartPages[6]),
+        JuzMeta(8, "ولو أننا", "Wa Law Annana", 6, 111, 7, 87, juzStartPages[7]),
+        JuzMeta(9, "قال الملأ", "Qalal Mala'u", 7, 88, 8, 40, juzStartPages[8]),
+        JuzMeta(10, "واعلموا", "Wa'lamu", 8, 41, 9, 92, juzStartPages[9]),
+        JuzMeta(11, "يعتذرون", "Ya'tadhirun", 9, 93, 11, 5, juzStartPages[10]),
+        JuzMeta(12, "وما من دابة", "Wa Ma Min Dabbah", 11, 6, 12, 52, juzStartPages[11]),
+        JuzMeta(13, "وما أبرئ", "Wa Ma Ubarri'u", 12, 53, 14, 52, juzStartPages[12]),
+        JuzMeta(14, "ربما", "Rubama", 15, 1, 16, 128, juzStartPages[13]),
+        JuzMeta(15, "سبحان الذي", "Subhanalladhi", 17, 1, 18, 74, juzStartPages[14]),
+        JuzMeta(16, "قال ألم", "Qal Alam", 18, 75, 20, 135, juzStartPages[15]),
+        JuzMeta(17, "اقترب للناس", "Iqtaraba", 21, 1, 22, 78, juzStartPages[16]),
+        JuzMeta(18, "قد أفلح", "Qad Aflaha", 23, 1, 25, 20, juzStartPages[17]),
+        JuzMeta(19, "وقال الذين", "Wa Qalalladhina", 25, 21, 27, 55, juzStartPages[18]),
+        JuzMeta(20, "أمن خلق", "A'man Khalaqa", 27, 56, 29, 45, juzStartPages[19]),
+        JuzMeta(21, "اتل ما أوحي", "Utlu Ma Uhiya", 29, 46, 33, 30, juzStartPages[20]),
+        JuzMeta(22, "ومن يقنت", "Wa Man Yaqnut", 33, 31, 36, 27, juzStartPages[21]),
+        JuzMeta(23, "وما لي", "Wa Mali", 36, 28, 39, 31, juzStartPages[22]),
+        JuzMeta(24, "فمن أظلم", "Faman Azlamu", 39, 32, 41, 46, juzStartPages[23]),
+        JuzMeta(25, "إليه يرد", "Ilayhi Yuraddu", 41, 47, 45, 37, juzStartPages[24]),
+        JuzMeta(26, "حم", "Ha Mim", 46, 1, 51, 30, juzStartPages[25]),
+        JuzMeta(27, "قال فما خطبكم", "Qala Fama Khatbukum", 51, 31, 57, 29, juzStartPages[26]),
+        JuzMeta(28, "قد سمع الله", "Qad Sami'Allah", 58, 1, 66, 12, juzStartPages[27]),
+        JuzMeta(29, "تبارك الذي", "Tabarakalladhi", 67, 1, 77, 50, juzStartPages[28]),
+        JuzMeta(30, "عم يتساءلون", "Amma Yatasa'alun", 78, 1, 114, 6, juzStartPages[29]),
     )
 
     // Verified authentic starter ayahs for immediate offline reading (Surah 1, 103, 108, 112, 113, 114)

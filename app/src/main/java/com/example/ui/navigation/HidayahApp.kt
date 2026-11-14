@@ -87,12 +87,13 @@ object HidayahRoutes {
     const val LEARN = "learn"
     const val EXPLORE = "explore"
     const val PROFILE = "profile"
-    const val QURAN_READER = "quran_reader/{surahNumber}?ayah={ayah}"
+    const val QURAN_READER = "quran_reader/{surahNumber}?ayah={ayah}&page={page}"
     const val HIFZ = "hifz"
     const val TAJWEED = "tajweed"
     const val ARABIC = "arabic"
     const val KIDS = "kids"
     const val PRAYERS = "prayers"
+    const val PRAYERS_WITH_TAB = "prayers?tab={tab}"
     const val QIBLA = "qibla"
     const val DUAS = "duas"
     const val TASBIH = "tasbih"
@@ -100,11 +101,12 @@ object HidayahRoutes {
     const val ASMA_99 = "asma_99"
     const val ZAKAT = "zakat"
     const val HADITH_LIBRARY = "hadith_library"
+    const val HADITH_LIBRARY_WITH_TAB = "hadith_library?tab={tab}"
     const val WALLPAPERS = "wallpapers"
     const val AI_ASSISTANT = "ai_assistant"
 
-    fun quranReader(surahNumber: Int, ayah: Int = 1): String =
-        "quran_reader/$surahNumber?ayah=$ayah"
+    fun quranReader(surahNumber: Int, ayah: Int = 1, page: Int = -1): String =
+        "quran_reader/$surahNumber?ayah=$ayah&page=$page"
 }
 
 private data class TopTabItem(
@@ -123,6 +125,10 @@ fun HidayahApp() {
 
     val prefs by mainVm.prefs.collectAsStateWithLifecycle()
     val bookmarks by mainVm.bookmarks.collectAsStateWithLifecycle()
+    val pageBookmarks by mainVm.pageBookmarks.collectAsStateWithLifecycle()
+    val cachedPageCount by mainVm.cachedPageCount.collectAsStateWithLifecycle()
+    val cachedAyahCount by mainVm.cachedAyahCount.collectAsStateWithLifecycle()
+    val offlineBatchStatus by mainVm.offlineBatchStatus.collectAsStateWithLifecycle()
     val hifzList by mainVm.hifzProgress.collectAsStateWithLifecycle()
     val tasbihSessions by mainVm.tasbihSessions.collectAsStateWithLifecycle()
     val favDuas by mainVm.favoriteDuaIds.collectAsStateWithLifecycle()
@@ -139,6 +145,10 @@ fun HidayahApp() {
         .collectAsStateWithLifecycle(initialValue = Firebase.auth.currentUser)
 
     var pendingAiPrompt by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(prefs.audioVolume) {
+        AudioPlayerManager.setVolume(prefs.audioVolume)
+    }
 
     LaunchedEffect(
         prefs.selectedCityName,
@@ -292,19 +302,44 @@ fun HidayahApp() {
                                         val searchQuery by quranVm.searchQuery.collectAsStateWithLifecycle()
                                         val searchResults by quranVm.searchResults.collectAsStateWithLifecycle()
                                         val isSearching by quranVm.isSearching.collectAsStateWithLifecycle()
+                                        val availMb = remember(downloadedAudio.size, cachedAyahCount) {
+                                            mainVm.availableStorageMb()
+                                        }
 
                                         QuranHubScreen(
                                             prefs = prefs,
                                             bookmarks = bookmarks,
+                                            pageBookmarks = pageBookmarks,
+                                            cachedPageCount = cachedPageCount,
+                                            cachedAyahCount = cachedAyahCount,
+                                            downloadedAudio = downloadedAudio,
+                                            availableStorageMb = availMb,
+                                            offlineBatchStatus = offlineBatchStatus,
+                                            audioState = audioState,
                                             searchQuery = searchQuery,
                                             searchResults = searchResults,
                                             isSearching = isSearching,
                                             onSearchQueryChange = quranVm::updateSearchQuery,
                                             onExecuteSearch = { quranVm.executeSearch(prefs.translationEdition) },
-                                            onOpenSurah = { surah, ayah ->
-                                                navController.navigate(HidayahRoutes.quranReader(surah, ayah))
+                                            onOpenSurah = { surah, ayah, pageNum ->
+                                                navController.navigate(
+                                                    HidayahRoutes.quranReader(surah, ayah, pageNum ?: -1)
+                                                )
                                             },
-                                            onDeleteBookmark = mainVm::removeBookmark
+                                            onSelectMushafEdition = mainVm::setMushafEdition,
+                                            onSetLayout = mainVm::setQuranLayout,
+                                            onToggleFavoriteSurah = mainVm::toggleFavoriteSurah,
+                                            onToggleCompletedJuz = mainVm::toggleCompletedJuz,
+                                            onIncrementKhatamPage = { mainVm.incrementKhatamPages(1) },
+                                            onDeleteBookmark = mainVm::removeBookmark,
+                                            onDeletePageBookmark = mainVm::removePageBookmark,
+                                            onPrefetchSurahsOffline = { surahs ->
+                                                mainVm.prefetchSurahRangeOffline(surahs, prefs.translationEdition)
+                                            },
+                                            onDownloadSurahAudio = { sNum, qari ->
+                                                mainVm.downloadSurahAudio(sNum, qari) {}
+                                            },
+                                            onDeleteSurahAudio = mainVm::deleteDownloadedSurahAudio
                                         )
                                     }
 
@@ -312,28 +347,41 @@ fun HidayahApp() {
                                         route = HidayahRoutes.QURAN_READER,
                                         arguments = listOf(
                                             navArgument("surahNumber") { type = NavType.IntType },
-                                            navArgument("ayah") { type = NavType.IntType; defaultValue = 1 }
+                                            navArgument("ayah") { type = NavType.IntType; defaultValue = 1 },
+                                            navArgument("page") { type = NavType.IntType; defaultValue = -1 },
                                         )
                                     ) { entry ->
                                         val surahNum = entry.arguments?.getInt("surahNumber") ?: 1
                                         val ayahNum = entry.arguments?.getInt("ayah") ?: 1
+                                        val explicitPage = entry.arguments?.getInt("page")?.takeIf { it in 1..604 }
 
-                                        LaunchedEffect(surahNum, prefs.translationEdition) {
-                                            quranVm.selectSurah(surahNum, prefs.translationEdition)
+                                        LaunchedEffect(surahNum, ayahNum, explicitPage, prefs.translationEdition) {
+                                            quranVm.openSurahAndResolvePage(
+                                                surahNum = surahNum,
+                                                ayahNum = ayahNum,
+                                                explicitPage = explicitPage,
+                                                edition = prefs.translationEdition
+                                            )
                                         }
                                         val ayahs by quranVm.ayahsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+                                        val currentPage by quranVm.currentPage.collectAsStateWithLifecycle()
                                         val loadState by quranVm.loadState.collectAsStateWithLifecycle()
 
                                         QuranReaderScreen(
                                             surahNumber = surahNum,
                                             initialAyah = ayahNum,
+                                            currentPage = currentPage,
                                             prefs = prefs,
                                             ayahs = ayahs,
                                             loadState = loadState,
                                             bookmarks = bookmarks,
+                                            pageBookmarks = pageBookmarks,
                                             favoriteQariIds = favQaris,
                                             downloadedAudio = downloadedAudio,
                                             audioState = audioState,
+                                            observePage = { p -> quranVm.observePage(p, prefs.translationEdition) },
+                                            onEnsurePageLoaded = { p -> quranVm.ensurePageLoaded(p, prefs.translationEdition) },
+                                            onJumpToPage = { p -> quranVm.selectPage(p, prefs.translationEdition) },
                                             onBack = { navController.popBackStack() },
                                             onSelectSurah = { next ->
                                                 navController.navigate(HidayahRoutes.quranReader(next, 1)) {
@@ -341,17 +389,29 @@ fun HidayahApp() {
                                                 }
                                             },
                                             onUpdateLastRead = mainVm::setLastRead,
+                                            onUpdateLastReadPage = mainVm::setLastReadPage,
+                                            onSetMushafEdition = mainVm::setMushafEdition,
                                             onSetScript = mainVm::setQuranScript,
                                             onSetLayout = mainVm::setQuranLayout,
+                                            onSetTwoPageSpread = mainVm::setTwoPageSpreadPref,
                                             onSetArabicFont = mainVm::setArabicFont,
                                             onSetArabicFontSize = mainVm::setArabicFontSize,
+                                            onSetPageMarginDp = mainVm::setReaderPageMarginDp,
                                             onSetReadingMode = mainVm::setReadingMode,
+                                            onSetBrightness = mainVm::setReaderBrightness,
+                                            onSetKeepScreenAwake = mainVm::setKeepScreenAwake,
+                                            onSetLockPortrait = mainVm::setLockPortraitOrientation,
+                                            onSetAudioVolume = mainVm::setAudioVolume,
                                             onSetTranslationEdition = mainVm::setTranslationEdition,
                                             onSetShowTranslation = mainVm::setShowTranslation,
                                             onSetShowWordByWord = mainVm::setShowWordByWord,
                                             onSetShowTransliteration = mainVm::setShowTransliteration,
                                             onUpsertBookmark = mainVm::upsertBookmark,
                                             onRemoveBookmark = mainVm::removeBookmark,
+                                            onTogglePageBookmark = { p, title ->
+                                                val exists = pageBookmarks.any { it.pageNumber == p }
+                                                if (exists) mainVm.removePageBookmark(p) else mainVm.upsertPageBookmark(p, title)
+                                            },
                                             onSelectQari = mainVm::setSelectedQari,
                                             onToggleFavoriteQari = { id -> mainVm.toggleFavorite("qari", id) },
                                             onDownloadSurah = mainVm::downloadSurahAudio,
@@ -420,14 +480,29 @@ fun HidayahApp() {
                                     composable(HidayahRoutes.EXPLORE) {
                                         ExploreHubScreen(
                                             prefs = prefs,
-                                            onNavigate = { route -> navController.navigate(route) }
+                                            audioState = audioState,
+                                            favoriteQariIds = favQaris,
+                                            onSelectQari = mainVm::setSelectedQari,
+                                            onToggleFavoriteQari = { id -> mainVm.toggleFavorite("qari", id) },
+                                            onNavigate = { route ->
+                                                if (route in topTabs.map { it.route }) {
+                                                    navigateTopTab(route)
+                                                } else {
+                                                    navController.navigate(route)
+                                                }
+                                            }
                                         )
                                     }
 
-                                    composable(HidayahRoutes.PRAYERS) {
+                                    composable(
+                                        route = HidayahRoutes.PRAYERS_WITH_TAB,
+                                        arguments = listOf(navArgument("tab") { type = NavType.IntType; defaultValue = 0 })
+                                    ) { entry ->
+                                        val tab = entry.arguments?.getInt("tab") ?: 0
                                         PrayerTimesScreen(
                                             prefs = prefs,
                                             prayerState = prayerState,
+                                            initialTab = tab,
                                             onSelectCity = mainVm::setLocation,
                                             onRequestGps = {
                                                 prayerVm.detectCurrentLocation(mainVm::setLocation)
@@ -492,9 +567,14 @@ fun HidayahApp() {
                                         ZakatCalculatorScreen(onBack = { navController.popBackStack() })
                                     }
 
-                                    composable(HidayahRoutes.HADITH_LIBRARY) {
+                                    composable(
+                                        route = HidayahRoutes.HADITH_LIBRARY_WITH_TAB,
+                                        arguments = listOf(navArgument("tab") { type = NavType.IntType; defaultValue = 0 })
+                                    ) { entry ->
+                                        val tab = entry.arguments?.getInt("tab") ?: 0
                                         HadithAndLibraryScreen(
                                             prefs = prefs,
+                                            initialTab = tab,
                                             onBack = { navController.popBackStack() }
                                         )
                                     }

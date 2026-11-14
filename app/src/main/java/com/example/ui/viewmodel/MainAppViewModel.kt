@@ -1,6 +1,7 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.os.StatFs
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.audio.AudioPlayerManager
@@ -10,6 +11,8 @@ import com.example.data.local.DownloadedAudioEntity
 import com.example.data.local.FavoriteItemEntity
 import com.example.data.local.HifzProgressEntity
 import com.example.data.local.LessonProgressEntity
+import com.example.data.local.MushafEdition
+import com.example.data.local.PageBookmarkEntity
 import com.example.data.local.PreferencesRepository
 import com.example.data.local.QuranLayoutStyle
 import com.example.data.local.QuranScriptType
@@ -22,8 +25,10 @@ import com.example.localization.AppLanguage
 import com.example.ui.theme.ArabicFontChoice
 import com.example.ui.theme.IslamicThemePreset
 import com.example.ui.theme.QuranReadingMode
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -42,6 +47,21 @@ class MainAppViewModel(application: Application) : AndroidViewModel(application)
     val bookmarks: StateFlow<List<BookmarkEntity>> = dao.observeBookmarks().stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList()
     )
+
+    val pageBookmarks: StateFlow<List<PageBookmarkEntity>> = dao.observePageBookmarks().stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList()
+    )
+
+    val cachedAyahCount: StateFlow<Int> = dao.observeTotalCachedAyahs().stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5_000), 0
+    )
+
+    val cachedPageCount: StateFlow<Int> = dao.observeCachedPageCount().stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5_000), 0
+    )
+
+    private val _offlineBatchStatus = MutableStateFlow<String?>(null)
+    val offlineBatchStatus: StateFlow<String?> = _offlineBatchStatus.asStateFlow()
 
     val hifzProgress: StateFlow<List<HifzProgressEntity>> = dao.observeHifzProgress().stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList()
@@ -81,6 +101,13 @@ class MainAppViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun availableStorageMb(): Long = try {
+        val stat = StatFs(getApplication<Application>().filesDir.path)
+        (stat.availableBytes / (1024L * 1024L)).coerceAtLeast(0L)
+    } catch (_: Exception) {
+        0L
+    }
+
     fun completeWelcome() = viewModelScope.launch { prefsRepo.setHasCompletedWelcome(true) }
     fun setThemePreset(preset: IslamicThemePreset) = viewModelScope.launch { prefsRepo.setThemePreset(preset) }
     fun setAppLanguage(language: AppLanguage) = viewModelScope.launch { prefsRepo.setAppLanguage(language) }
@@ -89,11 +116,28 @@ class MainAppViewModel(application: Application) : AndroidViewModel(application)
     fun setReadingMode(mode: QuranReadingMode) = viewModelScope.launch { prefsRepo.setReadingMode(mode) }
     fun setQuranScript(script: QuranScriptType) = viewModelScope.launch { prefsRepo.setQuranScript(script) }
     fun setQuranLayout(layout: QuranLayoutStyle) = viewModelScope.launch { prefsRepo.setQuranLayout(layout) }
+    fun setMushafEdition(edition: MushafEdition) = viewModelScope.launch { prefsRepo.setMushafEdition(edition) }
     fun setTranslationEdition(edition: String) = viewModelScope.launch { prefsRepo.setTranslationEdition(edition) }
     fun setShowTranslation(show: Boolean) = viewModelScope.launch { prefsRepo.setShowTranslation(show) }
     fun setShowWordByWord(show: Boolean) = viewModelScope.launch { prefsRepo.setShowWordByWord(show) }
     fun setShowTransliteration(show: Boolean) = viewModelScope.launch { prefsRepo.setShowTransliteration(show) }
     fun setLastRead(surah: Int, ayah: Int) = viewModelScope.launch { prefsRepo.setLastRead(surah, ayah) }
+    fun setLastReadPage(page: Int, surah: Int? = null, ayah: Int? = null) = viewModelScope.launch {
+        prefsRepo.setLastReadPage(page, surah, ayah)
+    }
+    fun setTwoPageSpreadPref(pref: Int) = viewModelScope.launch { prefsRepo.setTwoPageSpreadPref(pref) }
+    fun setReaderPageMarginDp(marginDp: Float) = viewModelScope.launch { prefsRepo.setReaderPageMarginDp(marginDp) }
+    fun setReaderBrightness(brightness: Float) = viewModelScope.launch { prefsRepo.setReaderBrightness(brightness) }
+    fun setKeepScreenAwake(awake: Boolean) = viewModelScope.launch { prefsRepo.setKeepScreenAwake(awake) }
+    fun setLockPortraitOrientation(locked: Boolean) = viewModelScope.launch { prefsRepo.setLockPortraitOrientation(locked) }
+    fun setDailyPageGoal(pages: Int) = viewModelScope.launch { prefsRepo.setDailyPageGoal(pages) }
+    fun toggleFavoriteSurah(surahNumber: Int) = viewModelScope.launch { prefsRepo.toggleFavoriteSurah(surahNumber) }
+    fun toggleCompletedJuz(juzNumber: Int) = viewModelScope.launch { prefsRepo.toggleCompletedJuz(juzNumber) }
+    fun setAudioVolume(volume: Float) = viewModelScope.launch {
+        prefsRepo.setAudioVolume(volume)
+        AudioPlayerManager.setVolume(volume)
+    }
+
     fun setSelectedQari(qariId: String) = viewModelScope.launch { prefsRepo.setSelectedQari(qariId) }
     fun setLocation(city: String, lat: Double, lon: Double) = viewModelScope.launch { prefsRepo.setLocation(city, lat, lon) }
     fun setPrayerCalculation(methodIdx: Int, asrHanafi: Boolean) = viewModelScope.launch {
@@ -163,6 +207,27 @@ class MainAppViewModel(application: Application) : AndroidViewModel(application)
         dao.deleteBookmark(surahNumber, ayahNumber)
     }
 
+    fun upsertPageBookmark(pageNumber: Int, title: String, note: String = "") = viewModelScope.launch {
+        dao.upsertPageBookmark(
+            PageBookmarkEntity(
+                pageNumber = pageNumber.coerceIn(1, QuranMetadata.TOTAL_MUSHAF_PAGES),
+                title = title.ifBlank { "Mushaf Page $pageNumber" },
+                note = note.trim(),
+            )
+        )
+    }
+
+    fun removePageBookmark(pageNumber: Int) = viewModelScope.launch {
+        dao.deletePageBookmark(pageNumber)
+    }
+
+    fun prefetchSurahRangeOffline(surahs: List<Int>, translationEdition: String) = viewModelScope.launch {
+        if (_offlineBatchStatus.value != null) return@launch
+        quranRepo.prefetchSurahsForOffline(surahs, translationEdition) { done, total, currentName ->
+            _offlineBatchStatus.value = if (done >= total) null else "Caching $currentName ($done/$total)"
+        }
+    }
+
     fun updateHifzProgress(
         surahNumber: Int,
         memorizedAyahs: Int,
@@ -215,5 +280,6 @@ class MainAppViewModel(application: Application) : AndroidViewModel(application)
 
     fun deleteDownloadedSurahAudio(qariId: String, surahNumber: Int) = viewModelScope.launch {
         dao.deleteDownloadedSurahAudio(qariId, surahNumber)
+        AudioPlayerManager.deleteSurahFiles(getApplication(), qariId, surahNumber)
     }
 }

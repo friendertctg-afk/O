@@ -10,13 +10,14 @@ import androidx.room.RoomDatabase
         CachedAyahEntity::class,
         CachedTranslationEntity::class,
         BookmarkEntity::class,
+        PageBookmarkEntity::class,
         HifzProgressEntity::class,
         TasbihSessionEntity::class,
         FavoriteItemEntity::class,
         LessonProgressEntity::class,
         DownloadedAudioEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {

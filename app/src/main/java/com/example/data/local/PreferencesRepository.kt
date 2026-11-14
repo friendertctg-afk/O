@@ -44,14 +44,63 @@ enum class QuranScriptType(val key: String, val label: String, val description: 
 }
 
 enum class QuranLayoutStyle(val key: String, val label: String) {
+    HAFIZI_PAGE("HAFIZI_PAGE", "Mushaf Page"),
     AYAH_BY_AYAH("AYAH_BY_AYAH", "Ayah by Ayah"),
-    MADANI_MUSHAF("MADANI_MUSHAF", "Madani Mushaf"),
-    HAFIZI_PAGE("HAFIZI_PAGE", "Hafizi 15-Line"),
+    MADANI_MUSHAF("MADANI_MUSHAF", "Madani Flow"),
     SIMPLE_READING("SIMPLE_READING", "Arabic Only");
 
     companion object {
         fun fromKey(key: String?): QuranLayoutStyle =
-            entries.firstOrNull { it.key == key } ?: AYAH_BY_AYAH
+            entries.firstOrNull { it.key == key } ?: HAFIZI_PAGE
+    }
+}
+
+enum class MushafEdition(
+    val key: String,
+    val label: String,
+    val arabicLabel: String,
+    val badgeText: String,
+    val description: String,
+) {
+    HAFIZI(
+        "HAFIZI",
+        "Hafizi 15-Line",
+        "مصحف الحفاظ",
+        "Hafizi • ١٥ سطراً",
+        "Traditional South Asian & Hifz Mushaf layout with ornamental emerald-gold border, Juz/Ruku markers, and page numbers."
+    ),
+    MADANI(
+        "MADANI",
+        "Madani Mushaf",
+        "مصحف المدينة",
+        "Madani • 604p",
+        "King Fahd Glorious Qur'an Printing Complex standard 604-page Mushaf layout."
+    ),
+    INDO_PAK(
+        "INDO_PAK",
+        "Indo-Pak",
+        "المصحف الهندي",
+        "Indo-Pak",
+        "High-contrast clean South Asian / Nastaliq-friendly script favored across Bangladesh, India & Pakistan."
+    ),
+    UTHMANI(
+        "UTHMANI",
+        "Uthmani Classic",
+        "الرسم العثماني",
+        "Uthmani",
+        "Classic Uthmani orthography with traditional waqf pause signs."
+    ),
+    TAJWEED(
+        "TAJWEED",
+        "Tajweed Mushaf",
+        "مصحف التجويد",
+        "Tajweed",
+        "Full Tajweed color-coded rules integrated directly into the Mushaf page."
+    );
+
+    companion object {
+        fun fromKey(key: String?): MushafEdition =
+            entries.firstOrNull { it.key == key } ?: HAFIZI
     }
 }
 
@@ -59,16 +108,27 @@ data class UserPreferencesState(
     val themePreset: IslamicThemePreset = IslamicThemePreset.EMERALD_GOLD,
     val appLanguage: AppLanguage = AppLanguage.ENGLISH,
     val arabicFont: ArabicFontChoice = ArabicFontChoice.SCHEHERAZADE,
-    val arabicFontSizeSp: Float = 28f,
+    val arabicFontSizeSp: Float = 26f,
     val readingMode: QuranReadingMode = QuranReadingMode.LIGHT,
     val quranScript: QuranScriptType = QuranScriptType.UTHMANI,
-    val quranLayout: QuranLayoutStyle = QuranLayoutStyle.AYAH_BY_AYAH,
+    val quranLayout: QuranLayoutStyle = QuranLayoutStyle.HAFIZI_PAGE,
+    val mushafEdition: MushafEdition = MushafEdition.HAFIZI,
     val translationEdition: String = "en.sahih",
     val showTranslation: Boolean = true,
     val showWordByWord: Boolean = false,
     val showTransliteration: Boolean = true,
     val lastReadSurah: Int = 1,
     val lastReadAyah: Int = 1,
+    val lastReadPage: Int = 1,
+    val twoPageSpreadPref: Int = 0, // 0 = Auto (tablets/landscape), 1 = Single Page, 2 = Two-Page Spread
+    val readerPageMarginDp: Float = 14f,
+    val readerBrightness: Float = -1f, // -1f = System default
+    val keepScreenAwake: Boolean = true,
+    val lockPortraitOrientation: Boolean = false,
+    val dailyPageGoal: Int = 4,
+    val favoriteSurahs: Set<Int> = emptySet(),
+    val completedJuz: Set<Int> = emptySet(),
+    val audioVolume: Float = 1.0f,
     val selectedQariId: String = "ar.alafasy",
     val selectedCityName: String = "Dhaka",
     val latitude: Double = 23.8103,
@@ -107,12 +167,23 @@ class PreferencesRepository(private val context: Context) {
         val READING_MODE = stringPreferencesKey("reading_mode")
         val QURAN_SCRIPT = stringPreferencesKey("quran_script")
         val QURAN_LAYOUT = stringPreferencesKey("quran_layout")
+        val MUSHAF_EDITION = stringPreferencesKey("mushaf_edition")
         val TRANSLATION_EDITION = stringPreferencesKey("translation_edition")
         val SHOW_TRANSLATION = booleanPreferencesKey("show_translation")
         val SHOW_WORD_BY_WORD = booleanPreferencesKey("show_word_by_word")
         val SHOW_TRANSLITERATION = booleanPreferencesKey("show_transliteration")
         val LAST_READ_SURAH = intPreferencesKey("last_read_surah")
         val LAST_READ_AYAH = intPreferencesKey("last_read_ayah")
+        val LAST_READ_PAGE = intPreferencesKey("last_read_page")
+        val TWO_PAGE_SPREAD_PREF = intPreferencesKey("two_page_spread_pref")
+        val READER_MARGIN_DP = floatPreferencesKey("reader_margin_dp")
+        val READER_BRIGHTNESS = floatPreferencesKey("reader_brightness")
+        val KEEP_SCREEN_AWAKE = booleanPreferencesKey("keep_screen_awake")
+        val LOCK_PORTRAIT = booleanPreferencesKey("lock_portrait")
+        val DAILY_PAGE_GOAL = intPreferencesKey("daily_page_goal")
+        val FAVORITE_SURAHS = stringSetPreferencesKey("favorite_surahs")
+        val COMPLETED_JUZ = stringSetPreferencesKey("completed_juz")
+        val AUDIO_VOLUME = floatPreferencesKey("audio_volume")
         val SELECTED_QARI = stringPreferencesKey("selected_qari")
         val CITY_NAME = stringPreferencesKey("city_name")
         val LATITUDE = floatPreferencesKey("latitude")
@@ -148,16 +219,27 @@ class PreferencesRepository(private val context: Context) {
             themePreset = IslamicThemePreset.fromKey(prefs[Keys.THEME_PRESET]),
             appLanguage = lang,
             arabicFont = ArabicFontChoice.fromKey(prefs[Keys.ARABIC_FONT]),
-            arabicFontSizeSp = prefs[Keys.ARABIC_FONT_SIZE] ?: 28f,
+            arabicFontSizeSp = prefs[Keys.ARABIC_FONT_SIZE] ?: 26f,
             readingMode = QuranReadingMode.fromKey(prefs[Keys.READING_MODE]),
             quranScript = QuranScriptType.fromKey(prefs[Keys.QURAN_SCRIPT]),
             quranLayout = QuranLayoutStyle.fromKey(prefs[Keys.QURAN_LAYOUT]),
+            mushafEdition = MushafEdition.fromKey(prefs[Keys.MUSHAF_EDITION]),
             translationEdition = prefs[Keys.TRANSLATION_EDITION] ?: lang.defaultAlQuranEdition,
             showTranslation = prefs[Keys.SHOW_TRANSLATION] ?: true,
             showWordByWord = prefs[Keys.SHOW_WORD_BY_WORD] ?: false,
             showTransliteration = prefs[Keys.SHOW_TRANSLITERATION] ?: true,
             lastReadSurah = prefs[Keys.LAST_READ_SURAH] ?: 1,
             lastReadAyah = prefs[Keys.LAST_READ_AYAH] ?: 1,
+            lastReadPage = prefs[Keys.LAST_READ_PAGE] ?: 1,
+            twoPageSpreadPref = prefs[Keys.TWO_PAGE_SPREAD_PREF] ?: 0,
+            readerPageMarginDp = prefs[Keys.READER_MARGIN_DP] ?: 14f,
+            readerBrightness = prefs[Keys.READER_BRIGHTNESS] ?: -1f,
+            keepScreenAwake = prefs[Keys.KEEP_SCREEN_AWAKE] ?: true,
+            lockPortraitOrientation = prefs[Keys.LOCK_PORTRAIT] ?: false,
+            dailyPageGoal = prefs[Keys.DAILY_PAGE_GOAL] ?: 4,
+            favoriteSurahs = (prefs[Keys.FAVORITE_SURAHS] ?: emptySet()).mapNotNull { it.toIntOrNull() }.toSet(),
+            completedJuz = (prefs[Keys.COMPLETED_JUZ] ?: emptySet()).mapNotNull { it.toIntOrNull() }.toSet(),
+            audioVolume = prefs[Keys.AUDIO_VOLUME] ?: 1.0f,
             selectedQariId = prefs[Keys.SELECTED_QARI] ?: "ar.alafasy",
             selectedCityName = prefs[Keys.CITY_NAME] ?: "Dhaka",
             latitude = (prefs[Keys.LATITUDE] ?: 23.8103f).toDouble(),
@@ -252,6 +334,71 @@ class PreferencesRepository(private val context: Context) {
             it[Keys.LAST_READ_SURAH] = surah.coerceIn(1, 114)
             it[Keys.LAST_READ_AYAH] = ayah.coerceAtLeast(1)
         }
+    }
+
+    suspend fun setLastReadPage(page: Int, surah: Int? = null, ayah: Int? = null) {
+        context.dataStore.edit {
+            it[Keys.LAST_READ_PAGE] = page.coerceIn(1, 604)
+            if (surah != null) it[Keys.LAST_READ_SURAH] = surah.coerceIn(1, 114)
+            if (ayah != null) it[Keys.LAST_READ_AYAH] = ayah.coerceAtLeast(1)
+        }
+    }
+
+    suspend fun setMushafEdition(edition: MushafEdition) {
+        context.dataStore.edit {
+            it[Keys.MUSHAF_EDITION] = edition.key
+            when (edition) {
+                MushafEdition.TAJWEED -> it[Keys.QURAN_SCRIPT] = QuranScriptType.TAJWEED.key
+                MushafEdition.INDO_PAK -> it[Keys.QURAN_SCRIPT] = QuranScriptType.INDO_PAK.key
+                else -> it[Keys.QURAN_SCRIPT] = QuranScriptType.UTHMANI.key
+            }
+        }
+    }
+
+    suspend fun setTwoPageSpreadPref(pref: Int) {
+        context.dataStore.edit { it[Keys.TWO_PAGE_SPREAD_PREF] = pref.coerceIn(0, 2) }
+    }
+
+    suspend fun setReaderPageMarginDp(marginDp: Float) {
+        context.dataStore.edit { it[Keys.READER_MARGIN_DP] = marginDp.coerceIn(4f, 36f) }
+    }
+
+    suspend fun setReaderBrightness(brightness: Float) {
+        context.dataStore.edit {
+            it[Keys.READER_BRIGHTNESS] = if (brightness < 0f) -1f else brightness.coerceIn(0.08f, 1.0f)
+        }
+    }
+
+    suspend fun setKeepScreenAwake(awake: Boolean) {
+        context.dataStore.edit { it[Keys.KEEP_SCREEN_AWAKE] = awake }
+    }
+
+    suspend fun setLockPortraitOrientation(locked: Boolean) {
+        context.dataStore.edit { it[Keys.LOCK_PORTRAIT] = locked }
+    }
+
+    suspend fun setDailyPageGoal(pages: Int) {
+        context.dataStore.edit { it[Keys.DAILY_PAGE_GOAL] = pages.coerceIn(1, 40) }
+    }
+
+    suspend fun toggleFavoriteSurah(surahNumber: Int) {
+        val key = surahNumber.toString()
+        context.dataStore.edit { prefs ->
+            val current = prefs[Keys.FAVORITE_SURAHS] ?: emptySet()
+            prefs[Keys.FAVORITE_SURAHS] = if (key in current) current - key else current + key
+        }
+    }
+
+    suspend fun toggleCompletedJuz(juzNumber: Int) {
+        val key = juzNumber.toString()
+        context.dataStore.edit { prefs ->
+            val current = prefs[Keys.COMPLETED_JUZ] ?: emptySet()
+            prefs[Keys.COMPLETED_JUZ] = if (key in current) current - key else current + key
+        }
+    }
+
+    suspend fun setAudioVolume(volume: Float) {
+        context.dataStore.edit { it[Keys.AUDIO_VOLUME] = volume.coerceIn(0f, 1f) }
     }
 
     suspend fun setSelectedQari(qariId: String) {

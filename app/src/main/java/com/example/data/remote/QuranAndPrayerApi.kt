@@ -35,6 +35,22 @@ data class AlQuranAyahDto(
     val numberInSurah: Int,
     val juz: Int,
     val page: Int,
+    val ruku: Int = 1,
+    val hizbQuarter: Int = 1,
+    val surah: AlQuranMatchSurahDto? = null,
+)
+
+@JsonClass(generateAdapter = true)
+data class AlQuranPageResponse(
+    val code: Int,
+    val status: String,
+    val data: AlQuranPageDataDto?,
+)
+
+@JsonClass(generateAdapter = true)
+data class AlQuranPageDataDto(
+    val number: Int,
+    val ayahs: List<AlQuranAyahDto> = emptyList(),
 )
 
 @JsonClass(generateAdapter = true)
@@ -71,6 +87,12 @@ interface QuranApiService {
         @Path("surahNumber") surahNumber: Int,
         @Path("editions") editions: String,
     ): AlQuranMultiEditionResponse
+
+    @GET("v1/page/{pageNumber}/{edition}")
+    suspend fun getPageEdition(
+        @Path("pageNumber") pageNumber: Int,
+        @Path("edition") edition: String,
+    ): AlQuranPageResponse
 
     @GET("v1/search/{keyword}/all/{edition}")
     suspend fun searchQuran(

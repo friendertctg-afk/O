@@ -8,12 +8,27 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface AppDao {
-    // Cached Quran Ayahs
+    // Cached Quran Ayahs & Pages
     @Query("SELECT * FROM cached_ayahs WHERE surahNumber = :surahNumber ORDER BY ayahNumber ASC")
     fun observeSurahAyahs(surahNumber: Int): Flow<List<CachedAyahEntity>>
 
     @Query("SELECT * FROM cached_ayahs WHERE surahNumber = :surahNumber ORDER BY ayahNumber ASC")
     suspend fun getSurahAyahs(surahNumber: Int): List<CachedAyahEntity>
+
+    @Query("SELECT * FROM cached_ayahs WHERE page = :pageNumber ORDER BY surahNumber ASC, ayahNumber ASC")
+    fun observePageAyahs(pageNumber: Int): Flow<List<CachedAyahEntity>>
+
+    @Query("SELECT * FROM cached_ayahs WHERE page = :pageNumber ORDER BY surahNumber ASC, ayahNumber ASC")
+    suspend fun getPageAyahs(pageNumber: Int): List<CachedAyahEntity>
+
+    @Query("SELECT page FROM cached_ayahs WHERE surahNumber = :surahNumber AND ayahNumber = :ayahNumber LIMIT 1")
+    suspend fun getPageForAyah(surahNumber: Int, ayahNumber: Int): Int?
+
+    @Query("SELECT COUNT(*) FROM cached_ayahs")
+    fun observeTotalCachedAyahs(): Flow<Int>
+
+    @Query("SELECT COUNT(DISTINCT page) FROM cached_ayahs")
+    fun observeCachedPageCount(): Flow<Int>
 
     @Query("SELECT * FROM cached_ayahs WHERE juz = :juz ORDER BY surahNumber ASC, ayahNumber ASC")
     suspend fun getJuzAyahs(juz: Int): List<CachedAyahEntity>
@@ -28,8 +43,23 @@ interface AppDao {
     @Query("SELECT * FROM cached_translations WHERE surahNumber = :surahNumber AND edition = :edition ORDER BY ayahNumber ASC")
     fun observeTranslations(surahNumber: Int, edition: String): Flow<List<CachedTranslationEntity>>
 
+    @Query(
+        "SELECT t.* FROM cached_translations t " +
+            "INNER JOIN cached_ayahs a ON t.surahNumber = a.surahNumber AND t.ayahNumber = a.ayahNumber " +
+            "WHERE a.page = :pageNumber AND t.edition = :edition " +
+            "ORDER BY t.surahNumber ASC, t.ayahNumber ASC"
+    )
+    fun observePageTranslations(pageNumber: Int, edition: String): Flow<List<CachedTranslationEntity>>
+
     @Query("SELECT * FROM cached_translations WHERE surahNumber = :surahNumber AND edition = :edition ORDER BY ayahNumber ASC")
     suspend fun getTranslations(surahNumber: Int, edition: String): List<CachedTranslationEntity>
+
+    @Query(
+        "SELECT t.* FROM cached_translations t " +
+            "INNER JOIN cached_ayahs a ON t.surahNumber = a.surahNumber AND t.ayahNumber = a.ayahNumber " +
+            "WHERE a.page = :pageNumber AND t.edition = :edition"
+    )
+    suspend fun getPageTranslations(pageNumber: Int, edition: String): List<CachedTranslationEntity>
 
     @Query(
         "SELECT * FROM cached_translations WHERE text LIKE '%' || :query || '%' " +
@@ -43,7 +73,7 @@ interface AppDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTranslations(items: List<CachedTranslationEntity>)
 
-    // Bookmarks
+    // Ayah & Page Bookmarks
     @Query("SELECT * FROM bookmarks ORDER BY updatedAtMs DESC")
     fun observeBookmarks(): Flow<List<BookmarkEntity>>
 
@@ -52,6 +82,15 @@ interface AppDao {
 
     @Query("DELETE FROM bookmarks WHERE surahNumber = :surahNumber AND ayahNumber = :ayahNumber")
     suspend fun deleteBookmark(surahNumber: Int, ayahNumber: Int)
+
+    @Query("SELECT * FROM page_bookmarks ORDER BY updatedAtMs DESC")
+    fun observePageBookmarks(): Flow<List<PageBookmarkEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertPageBookmark(bookmark: PageBookmarkEntity)
+
+    @Query("DELETE FROM page_bookmarks WHERE pageNumber = :pageNumber")
+    suspend fun deletePageBookmark(pageNumber: Int)
 
     // Hifz Progress
     @Query("SELECT * FROM hifz_progress ORDER BY surahNumber ASC")
