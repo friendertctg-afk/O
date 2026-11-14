@@ -1,0 +1,222 @@
+{
+  "entities": {
+    "UserSyncProfile": {
+      "title": "UserSyncProfile",
+      "description": "Synchronized user reading, Tasbih, Hifz summary, and preference state.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owner."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name."
+        },
+        "lastSurah": {
+          "type": "integer",
+          "description": "Last read Surah number (1-114)."
+        },
+        "lastAyah": {
+          "type": "integer",
+          "description": "Last read Ayah number (1-286)."
+        },
+        "totalTasbihCount": {
+          "type": "integer",
+          "description": "Cumulative Tasbih count across sessions."
+        },
+        "hifzAyahsCount": {
+          "type": "integer",
+          "description": "Total memorized Ayahs count."
+        },
+        "preferredTheme": {
+          "type": "string",
+          "description": "Selected theme key."
+        },
+        "preferredLanguage": {
+          "type": "string",
+          "description": "Selected app language code."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "displayName",
+        "lastSurah",
+        "lastAyah",
+        "totalTasbihCount",
+        "hifzAyahsCount",
+        "preferredTheme",
+        "preferredLanguage",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "QuranBookmark": {
+      "title": "QuranBookmark",
+      "description": "Saved Quran Ayah bookmark and optional personal reflection note.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owner."
+        },
+        "surahNumber": {
+          "type": "integer",
+          "description": "Surah number (1-114)."
+        },
+        "ayahNumber": {
+          "type": "integer",
+          "description": "Ayah number (1-286)."
+        },
+        "surahName": {
+          "type": "string",
+          "description": "Surah transliterated name."
+        },
+        "note": {
+          "type": "string",
+          "description": "Optional personal reflection note."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "surahNumber",
+        "ayahNumber",
+        "surahName",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "HifzProgress": {
+      "title": "HifzProgress",
+      "description": "Per-Surah Hifzul Quran memorization and revision state.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owner."
+        },
+        "surahNumber": {
+          "type": "integer",
+          "description": "Surah number (1-114)."
+        },
+        "memorizedAyahs": {
+          "type": "integer",
+          "description": "Count of memorized Ayahs in this Surah."
+        },
+        "targetAyahs": {
+          "type": "integer",
+          "description": "Total Ayahs in this Surah."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["in_progress", "memorized", "revision"],
+          "description": "Current memorization phase."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "surahNumber",
+        "memorizedAyahs",
+        "targetAyahs",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LearningProgress": {
+      "title": "LearningProgress",
+      "description": "Arabic and Tajweed lesson completion and quiz score.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owner."
+        },
+        "moduleType": {
+          "type": "string",
+          "enum": ["arabic", "tajweed"],
+          "description": "Module category."
+        },
+        "lessonKey": {
+          "type": "string",
+          "description": "Unique identifier for the lesson."
+        },
+        "completed": {
+          "type": "boolean",
+          "description": "Whether the lesson has been completed."
+        },
+        "quizScore": {
+          "type": "integer",
+          "description": "Quiz percentage score (0-100)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "moduleType",
+        "lessonKey",
+        "completed",
+        "quizScore",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserSyncProfile" },
+      "description": "Owner-isolated sync profile and preferences."
+    },
+    "/users/{userId}/bookmarks/{bookmarkId}": {
+      "schema": { "$ref": "#/entities/QuranBookmark" },
+      "description": "Owner-isolated Quran bookmarks."
+    },
+    "/users/{userId}/hifz_progress/{progressId}": {
+      "schema": { "$ref": "#/entities/HifzProgress" },
+      "description": "Owner-isolated Hifzul Quran memorization records."
+    },
+    "/users/{userId}/learning_progress/{lessonId}": {
+      "schema": { "$ref": "#/entities/LearningProgress" },
+      "description": "Owner-isolated Arabic and Tajweed learning progress."
+    }
+  }
+}

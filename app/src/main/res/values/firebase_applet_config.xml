@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<resources>
+    <string name="firestore_database_id" translatable="false">ai-studio-android-alquran-880ae045-6bd9-4561-bae1-86a2a787cd92</string>
+    <string name="recaptcha_site_key" translatable="false">6LeDER8uAAAAADG3oRy9jY01RxNwVrh21zulosVT</string>
+</resources>

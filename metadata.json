@@ -1,0 +1,6 @@
+{
+  "name": "HIDAYAH",
+  "description": "HIDAYAH (هداية) — Your Complete Islamic Companion. Founded and Owned by Mohammed Touhidul Islam, Son of Sirajul Islam. Features complete Quran reading, 20 Qaris, Hifz & Tajweed, Arabic Academy, Duas & Azkar, Prayer Times & Qibla, Hadith & Tafsir, Daily Life Tracker, Kids Academy, and AI Islamic Assistant.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
