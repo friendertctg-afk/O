@@ -231,8 +231,13 @@ fun QuranReaderScreen(
         }
     }
 
+    val isBanglaEmdadiaTheme = prefs.readingMode == QuranReadingMode.LIGHT && isMushafPageMode
     val (surfaceBg, surfaceFg, cardBg, borderAccent) = when (prefs.readingMode) {
-        QuranReadingMode.LIGHT -> listOf(Color(0xFFF6F2E7), Color(0xFF141E1A), Color.White, Color(0xFFD6C9A6))
+        QuranReadingMode.LIGHT -> if (isBanglaEmdadiaTheme) {
+            listOf(Color(0xFFF6F7F6), Color(0xFF141E1A), Color.White, Color(0xFF2B4C3F))
+        } else {
+            listOf(Color(0xFFF6F2E7), Color(0xFF141E1A), Color.White, Color(0xFFD6C9A6))
+        }
         QuranReadingMode.DARK -> listOf(Color(0xFF0A0E0C), Color(0xFFF0ECE1), Color(0xFF141B17), Color(0xFF2D5E49))
         QuranReadingMode.SEPIA -> listOf(Color(0xFFF2E6CE), Color(0xFF2D2318), Color(0xFFFCF4E3), Color(0xFFC5A879))
         QuranReadingMode.COMFORT -> listOf(Color(0xFFE4EFE9), Color(0xFF13261E), Color(0xFFF6FBF8), Color(0xFF9AC2B0))
@@ -263,6 +268,9 @@ fun QuranReaderScreen(
 
     // Determine active Surah displayed by page header in Mushaf mode
     val activeAudioOrPageSurah = if (audioState.isPlaying) audioState.surahNumber else surahNumber
+    val totalMushafPages = QuranMetadata.totalPagesForEdition(prefs.mushafEdition)
+    val topBarBg = if (isBanglaEmdadiaTheme) Color(0xFF2B4C3F) else surfaceBg
+    val topBarFg = if (isBanglaEmdadiaTheme) Color.White else surfaceFg
 
     Scaffold(
         containerColor = surfaceBg,
@@ -270,10 +278,10 @@ fun QuranReaderScreen(
             if (!isFullScreen) {
                 TopAppBar(
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = surfaceBg,
-                        titleContentColor = surfaceFg,
-                        navigationIconContentColor = surfaceFg,
-                        actionIconContentColor = surfaceFg,
+                        containerColor = topBarBg,
+                        titleContentColor = topBarFg,
+                        navigationIconContentColor = topBarFg,
+                        actionIconContentColor = topBarFg,
                     ),
                     title = {
                         Column(
@@ -283,7 +291,7 @@ fun QuranReaderScreen(
                         ) {
                             Text(
                                 text = if (isMushafPageMode) {
-                                    "Mushaf Page $currentPage • ${prefs.mushafEdition.label}"
+                                    "Mushaf Page $currentPage / $totalMushafPages • ${prefs.mushafEdition.label}"
                                 } else {
                                     "${surahMeta.number}. ${surahMeta.englishName} • ${surahMeta.arabicName}"
                                 },
@@ -299,7 +307,7 @@ fun QuranReaderScreen(
                                     "${surahMeta.revelationType} • ${surahMeta.ayahCount} Ayahs"
                                 },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = surfaceFg.copy(alpha = 0.72f),
+                                color = topBarFg.copy(alpha = 0.78f),
                                 maxLines = 1
                             )
                         }
@@ -872,6 +880,7 @@ fun QuranReaderScreen(
         JumpToMushafDialog(
             currentPage = currentPage,
             currentSurah = surahNumber,
+            totalPages = totalMushafPages,
             onDismiss = { showJumpDialog = false },
             onJumpToPage = { p ->
                 onJumpToPage(p)
@@ -880,12 +889,12 @@ fun QuranReaderScreen(
             onJumpToSurahAyah = { s, a ->
                 onSelectSurah(s)
                 onUpdateLastRead(s, a)
-                onJumpToPage(QuranMetadata.startPageForSurah(s))
+                onJumpToPage(QuranMetadata.startPageForSurah(s, prefs.mushafEdition))
             },
             onJumpToJuz = { j ->
                 val juzMeta = QuranMetadata.getJuz(j)
                 onSelectSurah(juzMeta.startSurah)
-                onJumpToPage(juzMeta.startPage)
+                onJumpToPage(QuranMetadata.startPageForJuz(j, prefs.mushafEdition))
             }
         )
     }

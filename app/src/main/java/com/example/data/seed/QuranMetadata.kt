@@ -2,6 +2,13 @@ package com.example.data.seed
 
 import com.example.data.local.CachedAyahEntity
 import com.example.data.local.CachedTranslationEntity
+import com.example.data.local.MushafEdition
+
+data class HafiziPageSlice(
+    val madaniPage: Int,
+    val partIndex: Int = 0,
+    val totalParts: Int = 1,
+)
 
 data class SurahMeta(
     val number: Int,
@@ -36,8 +43,30 @@ data class QuranTopicMeta(
 
 object QuranMetadata {
     const val TOTAL_MUSHAF_PAGES = 604
+    const val TOTAL_MADANI_PAGES = 604
+    const val TOTAL_HAFIZI_PAGES = 611
 
-    // Verified standard 604-page Madani/Hafizi starting pages for Surahs 1..114
+    fun isHafizi611Edition(edition: MushafEdition): Boolean =
+        edition == MushafEdition.HAFIZI || edition == MushafEdition.INDO_PAK
+
+    fun totalPagesForEdition(edition: MushafEdition): Int =
+        if (isHafizi611Edition(edition)) TOTAL_HAFIZI_PAGES else TOTAL_MADANI_PAGES
+
+    // 7 Surah-dense Madani pages in Juz 30 split cleanly at Surah boundaries so Emdadia Hafizi totals exact 611 pages
+    private val splitMadaniPagesForHafizi = setOf(587, 591, 595, 597, 599, 601, 603)
+
+    private val hafiziPageSlices: List<HafiziPageSlice> = buildList(TOTAL_HAFIZI_PAGES) {
+        for (madaniPage in 1..TOTAL_MADANI_PAGES) {
+            if (madaniPage in splitMadaniPagesForHafizi) {
+                add(HafiziPageSlice(madaniPage = madaniPage, partIndex = 0, totalParts = 2))
+                add(HafiziPageSlice(madaniPage = madaniPage, partIndex = 1, totalParts = 2))
+            } else {
+                add(HafiziPageSlice(madaniPage = madaniPage, partIndex = 0, totalParts = 1))
+            }
+        }
+    }
+
+    // Verified standard 604-page Madani starting pages for Surahs 1..114
     private val surahStartPages = intArrayOf(
         1, 2, 50, 77, 106, 128, 151, 177, 187, 208,
         221, 235, 249, 255, 262, 267, 282, 293, 305, 312,
@@ -53,7 +82,7 @@ object QuranMetadata {
         603, 604, 604, 604
     )
 
-    // Verified standard 604-page starting pages for Juz 1..30
+    // Verified standard 604-page starting pages for Juz 1..30 (1..582 identical; Juz 30 runs 582..611 in 611p Hafizi)
     private val juzStartPages = intArrayOf(
         1, 22, 42, 62, 82, 102, 121, 142, 162, 182,
         201, 222, 242, 262, 282, 302, 322, 342, 362, 382,
@@ -215,14 +244,105 @@ object QuranMetadata {
     fun startPageForSurah(surahNumber: Int): Int =
         surahStartPages.getOrElse(surahNumber.coerceIn(1, 114) - 1) { 1 }
 
+    fun startPageForSurah(surahNumber: Int, edition: MushafEdition): Int {
+        val madaniPage = startPageForSurah(surahNumber)
+        if (!isHafizi611Edition(edition)) return madaniPage
+        return hafiziPageForSurahAndMadani(surahNumber, 1, madaniPage)
+    }
+
     fun startPageForJuz(juzNumber: Int): Int =
         juzStartPages.getOrElse(juzNumber.coerceIn(1, 30) - 1) { 1 }
+
+    fun startPageForJuz(juzNumber: Int, edition: MushafEdition): Int {
+        val madaniPage = startPageForJuz(juzNumber)
+        return if (isHafizi611Edition(edition)) madaniToHafiziStartPage(madaniPage) else madaniPage
+    }
+
+    fun resolveHafiziPageSlice(hafiziPage: Int): HafiziPageSlice {
+        val idx = (hafiziPage.coerceIn(1, TOTAL_HAFIZI_PAGES) - 1)
+        return hafiziPageSlices[idx]
+    }
+
+    fun madaniToHafiziStartPage(madaniPage: Int): Int {
+        val clamped = madaniPage.coerceIn(1, TOTAL_MADANI_PAGES)
+        val idx = hafiziPageSlices.indexOfFirst { it.madaniPage == clamped }
+        return if (idx >= 0) idx + 1 else clamped
+    }
+
+    fun hafiziPageForSurahAndMadani(
+        surahNumber: Int,
+        @Suppress("UNUSED_PARAMETER") ayahNumber: Int,
+        madaniPage: Int,
+    ): Int {
+        val startHafizi = madaniToHafiziStartPage(madaniPage)
+        val slice = resolveHafiziPageSlice(startHafizi)
+        if (slice.totalParts == 1) return startHafizi
+        // Second-part Surahs on the 7 split Juz-30 Madani pages
+        val secondHalfSurahs = setOf(83, 87, 92, 96, 100, 104, 105, 110, 111)
+        return if (surahNumber in secondHalfSurahs) startHafizi + 1 else startHafizi
+    }
+
+    fun <T> sliceItemsForHafiziPage(
+        hafiziPage: Int,
+        madaniPageItems: List<T>,
+        surahSelector: (T) -> Int,
+    ): List<T> {
+        val slice = resolveHafiziPageSlice(hafiziPage)
+        if (slice.totalParts <= 1 || madaniPageItems.isEmpty()) return madaniPageItems
+
+        val grouped = madaniPageItems.groupBy(surahSelector).values.toList()
+        if (grouped.size >= 2) {
+            val splitAt = (grouped.size / 2).coerceAtLeast(1)
+            return if (slice.partIndex == 0) {
+                grouped.take(splitAt).flatten()
+            } else {
+                grouped.drop(splitAt).flatten()
+            }
+        }
+
+        // Fallback if only 1 Surah exists locally (e.g., partial cache)
+        val mid = (madaniPageItems.size + 1) / 2
+        return if (slice.partIndex == 0) {
+            madaniPageItems.take(mid)
+        } else {
+            madaniPageItems.drop(mid).ifEmpty { madaniPageItems }
+        }
+    }
 
     fun toArabicIndic(number: Int): String {
         val digits = charArrayOf('٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩')
         return number.toString().map { ch ->
             if (ch in '0'..'9') digits[ch - '0'] else ch
         }.joinToString("")
+    }
+
+    fun manzilForSurah(surahNumber: Int): Int = when (surahNumber.coerceIn(1, 114)) {
+        in 1..4 -> 1
+        in 5..9 -> 2
+        in 10..16 -> 3
+        in 17..25 -> 4
+        in 26..36 -> 5
+        in 37..49 -> 6
+        else -> 7
+    }
+
+    private const val BASMALAH_UTHMANI = "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ"
+    private const val BASMALAH_SIMPLE = "بسم الله الرحمن الرحيم"
+
+    fun stripLeadingBasmalahIfPresent(
+        text: String,
+        surahNumber: Int,
+        ayahNumber: Int,
+    ): String {
+        if (surahNumber == 1 || surahNumber == 9 || ayahNumber != 1) return text
+        val trimmed = text.trimStart()
+        return when {
+            trimmed.startsWith(BASMALAH_UTHMANI) ->
+                trimmed.removePrefix(BASMALAH_UTHMANI).trimStart()
+            trimmed.startsWith(BASMALAH_SIMPLE) ->
+                trimmed.removePrefix(BASMALAH_SIMPLE).trimStart()
+            else -> text
+        }
     }
 
     val topics: List<QuranTopicMeta> = listOf(

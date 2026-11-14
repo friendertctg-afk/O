@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
+import com.example.data.local.MushafEdition
 import com.example.data.repository.AyahDisplayItem
 import com.example.data.repository.QuranRepository
 import com.example.data.seed.QuranMetadata
@@ -36,6 +37,9 @@ class QuranViewModel(application: Application) : AndroidViewModel(application) {
     private val _translationEdition = MutableStateFlow("en.sahih")
     val translationEdition: StateFlow<String> = _translationEdition.asStateFlow()
 
+    private val _mushafEdition = MutableStateFlow(MushafEdition.HAFIZI)
+    val mushafEdition: StateFlow<MushafEdition> = _mushafEdition.asStateFlow()
+
     private val _loadState = MutableStateFlow<SurahLoadState>(SurahLoadState.Loading)
     val loadState: StateFlow<SurahLoadState> = _loadState.asStateFlow()
 
@@ -62,15 +66,20 @@ class QuranViewModel(application: Application) : AndroidViewModel(application) {
 
     val currentPageAyahsFlow: Flow<List<AyahDisplayItem>> = combine(
         _currentPage,
-        _translationEdition
-    ) { page, edition ->
-        page to edition
-    }.flatMapLatest { (page, edition) ->
-        repo.observePageAyahs(page, edition)
+        _translationEdition,
+        _mushafEdition,
+    ) { page, edition, mushaf ->
+        Triple(page, edition, mushaf)
+    }.flatMapLatest { (page, edition, mushaf) ->
+        repo.observePageAyahs(page, edition, mushaf)
     }
 
-    fun observePage(page: Int, edition: String): Flow<List<AyahDisplayItem>> =
-        repo.observePageAyahs(page, edition)
+    fun observePage(
+        page: Int,
+        edition: String,
+        mushafEdition: MushafEdition = _mushafEdition.value,
+    ): Flow<List<AyahDisplayItem>> =
+        repo.observePageAyahs(page, edition, mushafEdition)
 
     fun selectSurah(surahNum: Int, edition: String) {
         val clamped = surahNum.coerceIn(1, 114)
@@ -79,25 +88,39 @@ class QuranViewModel(application: Application) : AndroidViewModel(application) {
         loadCurrentSurah(clamped, edition)
     }
 
-    fun selectPage(pageNum: Int, edition: String) {
-        val clamped = pageNum.coerceIn(1, QuranMetadata.TOTAL_MUSHAF_PAGES)
+    fun selectPage(
+        pageNum: Int,
+        edition: String,
+        mushafEdition: MushafEdition = _mushafEdition.value,
+    ) {
+        _mushafEdition.value = mushafEdition
+        val total = QuranMetadata.totalPagesForEdition(mushafEdition)
+        val clamped = pageNum.coerceIn(1, total)
         _currentPage.value = clamped
         _translationEdition.value = edition
-        loadCurrentPage(clamped, edition)
+        loadCurrentPage(clamped, edition, mushafEdition)
     }
 
-    fun openSurahAndResolvePage(surahNum: Int, ayahNum: Int, explicitPage: Int?, edition: String) {
+    fun openSurahAndResolvePage(
+        surahNum: Int,
+        ayahNum: Int,
+        explicitPage: Int?,
+        edition: String,
+        mushafEdition: MushafEdition = _mushafEdition.value,
+    ) {
         val clampedSurah = surahNum.coerceIn(1, 114)
         _surahNumber.value = clampedSurah
         _translationEdition.value = edition
+        _mushafEdition.value = mushafEdition
+        val total = QuranMetadata.totalPagesForEdition(mushafEdition)
         viewModelScope.launch {
-            val targetPage = if (explicitPage != null && explicitPage in 1..QuranMetadata.TOTAL_MUSHAF_PAGES) {
+            val targetPage = if (explicitPage != null && explicitPage in 1..total) {
                 explicitPage
             } else {
-                repo.resolvePageForAyah(clampedSurah, ayahNum)
+                repo.resolvePageForAyah(clampedSurah, ayahNum, mushafEdition)
             }
             _currentPage.value = targetPage
-            loadCurrentPage(targetPage, edition)
+            loadCurrentPage(targetPage, edition, mushafEdition)
             loadCurrentSurah(clampedSurah, edition)
         }
     }
@@ -106,20 +129,25 @@ class QuranViewModel(application: Application) : AndroidViewModel(application) {
         if (_translationEdition.value != edition) {
             _translationEdition.value = edition
             loadCurrentSurah(_surahNumber.value, edition)
-            loadCurrentPage(_currentPage.value, edition)
+            loadCurrentPage(_currentPage.value, edition, _mushafEdition.value)
         }
     }
 
-    fun ensurePageLoaded(pageNum: Int, edition: String) {
-        val clamped = pageNum.coerceIn(1, QuranMetadata.TOTAL_MUSHAF_PAGES)
+    fun ensurePageLoaded(
+        pageNum: Int,
+        edition: String,
+        mushafEdition: MushafEdition = _mushafEdition.value,
+    ) {
+        val total = QuranMetadata.totalPagesForEdition(mushafEdition)
+        val clamped = pageNum.coerceIn(1, total)
         viewModelScope.launch {
-            repo.loadPageIfNeeded(clamped, edition)
+            repo.loadPageIfNeeded(clamped, edition, mushafEdition)
         }
     }
 
     fun retryLoad() {
         loadCurrentSurah(_surahNumber.value, _translationEdition.value)
-        loadCurrentPage(_currentPage.value, _translationEdition.value)
+        loadCurrentPage(_currentPage.value, _translationEdition.value, _mushafEdition.value)
     }
 
     private fun loadCurrentSurah(surahNum: Int, edition: String) {
@@ -133,20 +161,25 @@ class QuranViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun loadCurrentPage(pageNum: Int, edition: String) {
+    private fun loadCurrentPage(
+        pageNum: Int,
+        edition: String,
+        mushafEdition: MushafEdition = _mushafEdition.value,
+    ) {
+        val total = QuranMetadata.totalPagesForEdition(mushafEdition)
         viewModelScope.launch {
             _pageLoadState.value = SurahLoadState.Loading
-            val res = repo.loadPageIfNeeded(pageNum, edition)
+            val res = repo.loadPageIfNeeded(pageNum, edition, mushafEdition)
             _pageLoadState.value = res.fold(
                 onSuccess = { SurahLoadState.Ready },
                 onFailure = { SurahLoadState.Error(it.localizedMessage ?: "Unable to fetch Mushaf page $pageNum") }
             )
             // Silently prefetch adjacent pages for smooth page turning & two-page spreads
-            if (pageNum < QuranMetadata.TOTAL_MUSHAF_PAGES) {
-                repo.loadPageIfNeeded(pageNum + 1, edition)
+            if (pageNum < total) {
+                repo.loadPageIfNeeded(pageNum + 1, edition, mushafEdition)
             }
             if (pageNum > 1) {
-                repo.loadPageIfNeeded(pageNum - 1, edition)
+                repo.loadPageIfNeeded(pageNum - 1, edition, mushafEdition)
             }
         }
     }

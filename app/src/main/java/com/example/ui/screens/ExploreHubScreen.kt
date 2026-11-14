@@ -118,7 +118,7 @@ fun ExploreHubScreen(
     val folders = remember {
         listOf(
             ExploreFolderItem(
-                "quran_mushaf", "Quran & Mushaf", "604-page Hafizi & Madani Mushaf reader",
+                "quran_mushaf", "Quran & Mushaf", "611-page Hafizi & 604-page Madani Mushaf reader",
                 "114 Surahs", Icons.AutoMirrored.Filled.MenuBook, Color(0xFF0E6B4F),
                 ExploreCategoryGroup.QURAN, HidayahRoutes.QURAN
             ),

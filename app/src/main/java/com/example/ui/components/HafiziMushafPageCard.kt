@@ -115,7 +115,8 @@ fun HafiziMushafReaderArea(
             2 -> true
             else -> !isCompactSpreadWidth
         }
-        val pageCount = if (isTwoPageSpread) QuranMetadata.TOTAL_MUSHAF_PAGES / 2 else QuranMetadata.TOTAL_MUSHAF_PAGES
+        val totalMushafPages = QuranMetadata.totalPagesForEdition(prefs.mushafEdition)
+        val pageCount = if (isTwoPageSpread) (totalMushafPages + 1) / 2 else totalMushafPages
         val initialIndex = if (isTwoPageSpread) {
             ((currentPage - 1) / 2).coerceIn(0, pageCount - 1)
         } else {
@@ -127,7 +128,7 @@ fun HafiziMushafReaderArea(
             pageCount = { pageCount }
         )
 
-        LaunchedEffect(currentPage, isTwoPageSpread) {
+        LaunchedEffect(currentPage, isTwoPageSpread, totalMushafPages) {
             val targetIdx = if (isTwoPageSpread) {
                 ((currentPage - 1) / 2).coerceIn(0, pageCount - 1)
             } else {
@@ -138,10 +139,10 @@ fun HafiziMushafReaderArea(
             }
         }
 
-        LaunchedEffect(pagerState.settledPage, isTwoPageSpread) {
+        LaunchedEffect(pagerState.settledPage, isTwoPageSpread, totalMushafPages) {
             val resolvedPage = if (isTwoPageSpread) pagerState.settledPage * 2 + 1 else pagerState.settledPage + 1
             onEnsurePageLoaded(resolvedPage)
-            if (isTwoPageSpread && resolvedPage + 1 <= QuranMetadata.TOTAL_MUSHAF_PAGES) {
+            if (isTwoPageSpread && resolvedPage + 1 <= totalMushafPages) {
                 onEnsurePageLoaded(resolvedPage + 1)
             }
             if (resolvedPage != currentPage) {
@@ -178,13 +179,14 @@ fun HafiziMushafReaderArea(
             ) { pageIdx ->
                 if (isTwoPageSpread) {
                     val rightPageNum = pageIdx * 2 + 1
-                    val leftPageNum = (rightPageNum + 1).coerceAtMost(QuranMetadata.TOTAL_MUSHAF_PAGES)
+                    val hasLeftPage = rightPageNum + 1 <= totalMushafPages
+                    val leftPageNum = (rightPageNum + 1).coerceAtMost(totalMushafPages)
                     val rightAyahs by observePage(rightPageNum).collectAsStateWithLifecycle(initialValue = emptyList())
                     val leftAyahs by observePage(leftPageNum).collectAsStateWithLifecycle(initialValue = emptyList())
 
                     LaunchedEffect(rightPageNum) {
                         onEnsurePageLoaded(rightPageNum)
-                        onEnsurePageLoaded(leftPageNum)
+                        if (hasLeftPage) onEnsurePageLoaded(leftPageNum)
                     }
 
                     Row(
@@ -217,30 +219,34 @@ fun HafiziMushafReaderArea(
                             onToggleControls = onToggleControlsVisibility,
                             modifier = Modifier.weight(1f).fillMaxHeight()
                         )
-                        SingleMushafPageView(
-                            pageNumber = leftPageNum,
-                            ayahs = leftAyahs,
-                            prefs = prefs,
-                            zoomScale = zoomScale,
-                            isCompactSpread = isCompactSpreadWidth,
-                            isPageBookmarked = pageBookmarks.any { it.pageNumber == leftPageNum },
-                            audioState = audioState,
-                            onRetry = { onEnsurePageLoaded(leftPageNum) },
-                            onToggleBookmark = { label -> onTogglePageBookmark(leftPageNum, label) },
-                            onAyahTapped = onAyahTapped,
-                            onPrevPage = {
-                                if (pagerState.currentPage > 0) {
-                                    coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
-                                }
-                            },
-                            onNextPage = {
-                                if (pagerState.currentPage < pageCount - 1) {
-                                    coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
-                                }
-                            },
-                            onToggleControls = onToggleControlsVisibility,
-                            modifier = Modifier.weight(1f).fillMaxHeight()
-                        )
+                        if (hasLeftPage) {
+                            SingleMushafPageView(
+                                pageNumber = leftPageNum,
+                                ayahs = leftAyahs,
+                                prefs = prefs,
+                                zoomScale = zoomScale,
+                                isCompactSpread = isCompactSpreadWidth,
+                                isPageBookmarked = pageBookmarks.any { it.pageNumber == leftPageNum },
+                                audioState = audioState,
+                                onRetry = { onEnsurePageLoaded(leftPageNum) },
+                                onToggleBookmark = { label -> onTogglePageBookmark(leftPageNum, label) },
+                                onAyahTapped = onAyahTapped,
+                                onPrevPage = {
+                                    if (pagerState.currentPage > 0) {
+                                        coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
+                                    }
+                                },
+                                onNextPage = {
+                                    if (pagerState.currentPage < pageCount - 1) {
+                                        coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+                                    }
+                                },
+                                onToggleControls = onToggleControlsVisibility,
+                                modifier = Modifier.weight(1f).fillMaxHeight()
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.weight(1f).fillMaxHeight())
+                        }
                     }
                 } else {
                     val pageNum = pageIdx + 1
@@ -249,10 +255,19 @@ fun HafiziMushafReaderArea(
                         onEnsurePageLoaded(pageNum)
                     }
 
+                    val effectiveSideMargin = if (
+                        prefs.mushafEdition == MushafEdition.HAFIZI ||
+                        prefs.mushafEdition == MushafEdition.INDO_PAK
+                    ) {
+                        prefs.readerPageMarginDp.coerceAtMost(8f).dp
+                    } else {
+                        prefs.readerPageMarginDp.dp
+                    }
+
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(horizontal = prefs.readerPageMarginDp.dp, vertical = 4.dp),
+                            .padding(horizontal = effectiveSideMargin, vertical = 4.dp),
                         contentAlignment = Alignment.TopCenter
                     ) {
                         SingleMushafPageView(
@@ -303,11 +318,32 @@ fun SingleMushafPageView(
     onToggleControls: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val arabicFont = prefs.arabicFont.toFontFamily()
     val edition = prefs.mushafEdition
+    val totalMushafPages = QuranMetadata.totalPagesForEdition(edition)
+    if (edition == MushafEdition.HAFIZI || edition == MushafEdition.INDO_PAK) {
+        HafiziMushafPage(
+            pageNumber = pageNumber,
+            ayahs = ayahs,
+            prefs = prefs,
+            zoomScale = zoomScale,
+            isCompactSpread = isCompactSpread,
+            isPageBookmarked = isPageBookmarked,
+            audioState = audioState,
+            totalPages = QuranMetadata.totalPagesForEdition(edition),
+            onRetry = onRetry,
+            onToggleBookmark = onToggleBookmark,
+            onAyahTapped = onAyahTapped,
+            onPrevPage = onPrevPage,
+            onNextPage = onNextPage,
+            onToggleControls = onToggleControls,
+            modifier = modifier
+        )
+        return
+    }
+
+    val arabicFont = prefs.arabicFont.toFontFamily()
     val effectiveScript = when (edition) {
         MushafEdition.TAJWEED -> QuranScriptType.TAJWEED
-        MushafEdition.INDO_PAK -> QuranScriptType.INDO_PAK
         else -> prefs.quranScript
     }
 
@@ -697,7 +733,7 @@ fun SingleMushafPageView(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(
                                 onClick = onNextPage,
-                                enabled = pageNumber < QuranMetadata.TOTAL_MUSHAF_PAGES,
+                                enabled = pageNumber < totalMushafPages,
                                 modifier = Modifier.size(36.dp).testTag("next_page_btn_$pageNumber")
                             ) {
                                 Icon(
@@ -720,7 +756,7 @@ fun SingleMushafPageView(
                             shape = RoundedCornerShape(22.dp),
                         ) {
                             Text(
-                                text = "صفحة ${QuranMetadata.toArabicIndic(pageNumber)} • $pageNumber / 604",
+                                text = "صفحة ${QuranMetadata.toArabicIndic(pageNumber)} • $pageNumber / $totalMushafPages",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = outerFrameColor,

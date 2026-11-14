@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,58 +21,40 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.CloudDone
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.StarBorder
-import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.audio.AudioPlaybackState
-import com.example.audio.AudioPlayerManager
 import com.example.data.local.BookmarkEntity
 import com.example.data.local.DownloadedAudioEntity
 import com.example.data.local.MushafEdition
@@ -81,12 +64,21 @@ import com.example.data.local.UserPreferencesState
 import com.example.data.repository.AyahDisplayItem
 import com.example.data.seed.QariCatalog
 import com.example.data.seed.QariInfo
+import com.example.data.seed.QuranBengaliData
 import com.example.data.seed.QuranMetadata
-import com.example.localization.AppLanguage
-import com.example.localization.stringsFor
-import com.example.ui.theme.AmiriFontFamily
+import com.example.ui.components.QuranBookmarksModalSheet
+import com.example.ui.components.QuranOfflineManagerSheet
+import com.example.ui.components.SurahOriginIcon
+import com.example.ui.components.SurahStarBadge
+import com.example.ui.theme.HindSiliguriFontFamily
+import com.example.ui.theme.LateefFontFamily
 
-@OptIn(ExperimentalMaterial3Api::class)
+private val ForestGreen = Color(0xFF2B4C3F)
+private val SegmentedTrackGreen = Color(0xFF476A5C)
+private val OffWhiteBg = Color(0xFFF6F7F6)
+private val TextCharcoal = Color(0xFF1F2723)
+private val MutedGray = Color(0xFF6A746E)
+
 @Composable
 fun QuranHubScreen(
     prefs: UserPreferencesState,
@@ -106,6 +98,7 @@ fun QuranHubScreen(
     onOpenSurah: (surahNumber: Int, ayahNumber: Int, pageNumber: Int?) -> Unit,
     onSelectMushafEdition: (MushafEdition) -> Unit,
     onSetLayout: (QuranLayoutStyle) -> Unit,
+    onSetShowTranslation: (Boolean) -> Unit = {},
     onToggleFavoriteSurah: (Int) -> Unit,
     onToggleCompletedJuz: (Int) -> Unit,
     onIncrementKhatamPage: () -> Unit,
@@ -114,548 +107,489 @@ fun QuranHubScreen(
     onPrefetchSurahsOffline: (List<Int>) -> Unit,
     onDownloadSurahAudio: (Int, QariInfo) -> Unit,
     onDeleteSurahAudio: (String, Int) -> Unit,
+    onBackToHome: () -> Unit = {},
 ) {
-    val context = LocalContext.current
-    val strings = stringsFor(prefs.appLanguage)
-    var selectedTab by remember { mutableIntStateOf(0) }
-    var onlyFavoriteSurahs by remember { mutableStateOf(false) }
-    val tabs = listOf(strings.surahs, strings.juz, strings.bookmarks, "Search", "Offline")
+    var showSurahParaList by rememberSaveable { mutableStateOf(false) }
+    var selectedListTab by rememberSaveable { mutableIntStateOf(0) } // 0=সূরা, 1=পারা, 2=বিষয়ভিত্তিক
+    var showBookmarksModal by remember { mutableStateOf(false) }
+    var showOfflineModal by remember { mutableStateOf(false) }
 
-    val filteredSurahs = remember(searchQuery, onlyFavoriteSurahs, prefs.favoriteSurahs) {
+    BackHandler(enabled = showSurahParaList) {
+        showSurahParaList = false
+    }
+
+    val selectedQari = QariCatalog.findById(prefs.selectedQariId)
+
+    if (!showSurahParaList) {
+        // =====================================================================
+        // VIEW 1: 2-COLUMN MUSHAF SELECTION SCREEN (QURAN HOME)
+        // =====================================================================
+        MushafSelectionScreen(
+            selectedEdition = prefs.mushafEdition,
+            selectedLayout = prefs.quranLayout,
+            lastReadSurah = prefs.lastReadSurah,
+            lastReadAyah = prefs.lastReadAyah,
+            lastReadPage = prefs.lastReadPage,
+            khatamPagesRead = prefs.khatamPagesRead,
+            onSelectEdition = { option ->
+                onSelectMushafEdition(option.edition)
+                onSetLayout(option.layout)
+                onSetShowTranslation(option.showTranslation)
+                showSurahParaList = true
+            },
+            onResumeLastRead = { pageNum ->
+                onOpenSurah(prefs.lastReadSurah, prefs.lastReadAyah, pageNum)
+            },
+            onIncrementKhatamPage = onIncrementKhatamPage,
+            onBackClick = onBackToHome,
+            onOpenSurahList = { showSurahParaList = true },
+            onOpenBookmarks = { showBookmarksModal = true },
+            onOpenOfflineManager = { showOfflineModal = true },
+            totalBookmarkCount = pageBookmarks.size + bookmarks.size,
+        )
+    } else {
+        // =====================================================================
+        // VIEW 2: SURAH, PARA & TOPIC LIST VIEW (BENGALI UI)
+        // =====================================================================
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(OffWhiteBg),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            Column(
+                modifier = Modifier
+                    .widthIn(max = 900.dp)
+                    .fillMaxSize()
+            ) {
+                MushafSelectionTopHeader(
+                    title = "কুরআন",
+                    showListActions = true,
+                    onBackClick = { showSurahParaList = false },
+                    onBookmarkClick = { showBookmarksModal = true },
+                    onSearchClick = {
+                        selectedListTab = 2
+                        if (searchQuery.isNotBlank()) onExecuteSearch()
+                    },
+                )
+                BanglaSurahParaTopicView(
+                    prefs = prefs,
+                    selectedTab = selectedListTab,
+                    onSelectTab = { selectedListTab = it },
+                    searchQuery = searchQuery,
+                    searchResults = searchResults,
+                    isSearching = isSearching,
+                    onSearchQueryChange = onSearchQueryChange,
+                    onExecuteSearch = {
+                        selectedListTab = 2
+                        onExecuteSearch()
+                    },
+                    onOpenSurah = onOpenSurah,
+                    onToggleCompletedJuz = onToggleCompletedJuz,
+                    onToggleFavoriteSurah = onToggleFavoriteSurah,
+                )
+            }
+        }
+    }
+
+    if (showBookmarksModal) {
+        QuranBookmarksModalSheet(
+            bookmarks = bookmarks,
+            pageBookmarks = pageBookmarks,
+            onDismiss = { showBookmarksModal = false },
+            onOpenSurah = onOpenSurah,
+            onDeleteBookmark = onDeleteBookmark,
+            onDeletePageBookmark = onDeletePageBookmark,
+        )
+    }
+
+    if (showOfflineModal) {
+        QuranOfflineManagerSheet(
+            cachedPageCount = cachedPageCount,
+            cachedAyahCount = cachedAyahCount,
+            downloadedAudio = downloadedAudio,
+            availableStorageMb = availableStorageMb,
+            offlineBatchStatus = offlineBatchStatus,
+            audioState = audioState,
+            selectedQari = selectedQari,
+            onDismiss = { showOfflineModal = false },
+            onPrefetchSurahsOffline = onPrefetchSurahsOffline,
+            onDownloadSurahAudio = onDownloadSurahAudio,
+            onDeleteSurahAudio = onDeleteSurahAudio,
+        )
+    }
+}
+
+
+@Composable
+private fun BanglaSurahParaTopicView(
+    prefs: UserPreferencesState,
+    selectedTab: Int,
+    onSelectTab: (Int) -> Unit,
+    searchQuery: String,
+    searchResults: List<AyahDisplayItem>,
+    isSearching: Boolean,
+    onSearchQueryChange: (String) -> Unit,
+    onExecuteSearch: () -> Unit,
+    onOpenSurah: (surahNumber: Int, ayahNumber: Int, pageNumber: Int?) -> Unit,
+    onToggleCompletedJuz: (Int) -> Unit,
+    onToggleFavoriteSurah: (Int) -> Unit,
+) {
+    val normalizedQueryNumber = remember(searchQuery) {
+        normalizeToAsciiDigits(searchQuery.trim()).toIntOrNull()
+    }
+
+    val filteredSurahs = remember(searchQuery, normalizedQueryNumber) {
         val q = searchQuery.trim()
         QuranMetadata.surahs.filter { surah ->
-            val favMatch = !onlyFavoriteSurahs || surah.number in prefs.favoriteSurahs
-            val textMatch = q.isEmpty() ||
-                q.toIntOrNull() == surah.number ||
+            val bnInfo = QuranBengaliData.getSurahInfo(surah.number)
+            q.isEmpty() ||
+                normalizedQueryNumber == surah.number ||
+                bnInfo.nameBn.contains(q, ignoreCase = true) ||
+                bnInfo.meaningBn.contains(q, ignoreCase = true) ||
                 surah.englishName.contains(q, ignoreCase = true) ||
                 surah.englishMeaning.contains(q, ignoreCase = true) ||
                 surah.bengaliName.contains(q, ignoreCase = true) ||
                 surah.arabicName.contains(q)
-            favMatch && textMatch
         }
     }
 
-    val filteredJuz = remember(searchQuery) {
-        val num = searchQuery.trim().toIntOrNull()
-        if (num != null && num in 1..30) {
-            QuranMetadata.juzList.filter { it.number == num }
-        } else {
+    val filteredJuz = remember(searchQuery, normalizedQueryNumber) {
+        val q = searchQuery.trim()
+        if (q.isEmpty()) {
             QuranMetadata.juzList
+        } else {
+            QuranMetadata.juzList.filter { juz ->
+                val bnJuz = QuranBengaliData.getJuzInfo(juz.number)
+                normalizedQueryNumber == juz.number ||
+                    bnJuz.nameBn.contains(q, ignoreCase = true) ||
+                    juz.englishName.contains(q, ignoreCase = true) ||
+                    juz.arabicName.contains(q)
+            }
         }
     }
 
-    val lastSurah = QuranMetadata.getSurah(prefs.lastReadSurah)
-    val selectedQari = QariCatalog.findById(prefs.selectedQariId)
-    val downloadedAudioMb = remember(downloadedAudio) {
-        val bytes = downloadedAudio.sumOf { it.sizeBytes }
-        String.format("%.1f MB", bytes / (1024f * 1024f))
-    }
-
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-        Column(
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(OffWhiteBg)
+    ) {
+        // Segmented Pill Tab Bar: সূরা | পারা | বিষয়ভিত্তিক
+        val segmentTabs = listOf("সূরা", "পারা", "বিষয়ভিত্তিক")
+        Surface(
             modifier = Modifier
-                .widthIn(max = 900.dp)
-                .fillMaxSize()
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            shape = RoundedCornerShape(10.dp),
+            color = SegmentedTrackGreen,
         ) {
-            // Premium Continue Reading + Hafizi Mushaf Hero Banner
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .clip(RoundedCornerShape(22.dp))
-                    .testTag("quran_continue_hero_card"),
-                shape = RoundedCornerShape(22.dp),
-                color = MaterialTheme.colorScheme.primary
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            Brush.linearGradient(
-                                listOf(
-                                    Color(0xFF0A3D2F),
-                                    Color(0xFF105B46),
-                                    Color(0xFF0A2E24),
-                                )
-                            )
+            Row(modifier = Modifier.fillMaxWidth().padding(2.dp)) {
+                segmentTabs.forEachIndexed { idx, label ->
+                    val isSelected = selectedTab == idx
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSelected) ForestGreen else Color.Transparent)
+                            .clickable { onSelectTab(idx) }
+                            .padding(vertical = 8.dp)
+                            .testTag("quran_tab_$idx"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = label,
+                            fontFamily = HindSiliguriFontFamily,
+                            fontSize = 15.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = Color.White,
+                            maxLines = 1
                         )
-                        .padding(16.dp)
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Hafizi & Madani Mushaf • ${prefs.mushafEdition.label}",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = Color(0xFFE9C767)
-                                )
-                                Text(
-                                    text = "${lastSurah.number}. ${lastSurah.englishName} (${lastSurah.arabicName})",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = "Page ${prefs.lastReadPage} / 604 • Ayah ${prefs.lastReadAyah} • Qari: ${selectedQari.name}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color.White.copy(alpha = 0.85f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Text(
-                                text = "القرآن",
-                                fontFamily = AmiriFontFamily,
-                                fontSize = 28.sp,
-                                color = Color(0xFFE9C767)
-                            )
-                        }
-
-                        // Action Row: Open Hafizi Mushaf | Ayah View | Listen Audio
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Button(
-                                onClick = {
-                                    onSetLayout(QuranLayoutStyle.HAFIZI_PAGE)
-                                    onOpenSurah(prefs.lastReadSurah, prefs.lastReadAyah, prefs.lastReadPage)
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFFE7C563),
-                                    contentColor = Color(0xFF0B2B22)
-                                ),
-                                modifier = Modifier.testTag("open_hafizi_mushaf_button")
-                            ) {
-                                Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Open Mushaf p.${prefs.lastReadPage}", fontWeight = FontWeight.Bold)
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    onSetLayout(QuranLayoutStyle.AYAH_BY_AYAH)
-                                    onOpenSurah(prefs.lastReadSurah, prefs.lastReadAyah, prefs.lastReadPage)
-                                },
-                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-                            ) {
-                                Text("Ayah + Translation")
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    AudioPlayerManager.playAyah(
-                                        context,
-                                        prefs.lastReadSurah,
-                                        prefs.lastReadAyah,
-                                        selectedQari
-                                    )
-                                },
-                                border = BorderStroke(1.dp, Color(0xFFE7C563).copy(alpha = 0.65f)),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE7C563))
-                            ) {
-                                Icon(Icons.Filled.GraphicEq, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Listen")
-                            }
-                        }
-
-                        // Reading Khatam Progress Bar
-                        val khatamFrac = (prefs.khatamPagesRead / 604f).coerceIn(0f, 1f)
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    "Khatam Progress: ${prefs.khatamPagesRead} / 604 pages • ${prefs.completedJuz.size}/30 Juz",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Color.White.copy(alpha = 0.9f)
-                                )
-                                Text(
-                                    "+1 Page",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFE7C563),
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable { onIncrementKhatamPage() }
-                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
-                            LinearProgressIndicator(
-                                progress = { khatamFrac },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(6.dp)
-                                    .clip(RoundedCornerShape(3.dp)),
-                                color = Color(0xFFE7C563),
-                                trackColor = Color.White.copy(alpha = 0.22f)
-                            )
-                        }
                     }
                 }
             }
+        }
 
-            // Mushaf Edition Switcher Pills
+        // White Outlined Search Input ("সূরার নাম/অর্থ/নম্বর দিয়ে অনুসন্ধান")
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .height(48.dp)
+                .testTag("quran_search_input"),
+            shape = RoundedCornerShape(10.dp),
+            color = Color.White,
+            border = BorderStroke(1.dp, Color(0xFF9EA7A2))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Search,
+                    contentDescription = "অনুসন্ধান",
+                    tint = Color(0xFF4F5953),
+                    modifier = Modifier.size(21.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    if (searchQuery.isEmpty()) {
+                        Text(
+                            text = "সূরার নাম/অর্থ/নম্বর দিয়ে অনুসন্ধান",
+                            fontFamily = HindSiliguriFontFamily,
+                            fontSize = 14.5.sp,
+                            color = Color(0xFF6B756F),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    BasicTextField(
+                        value = searchQuery,
+                        onValueChange = onSearchQueryChange,
+                        singleLine = true,
+                        textStyle = TextStyle(
+                            fontFamily = HindSiliguriFontFamily,
+                            fontSize = 14.5.sp,
+                            color = TextCharcoal
+                        ),
+                        cursorBrush = SolidColor(ForestGreen),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                if (searchQuery.isNotBlank()) {
+                    if (selectedTab == 2 || searchQuery.contains(":")) {
+                        Surface(
+                            color = ForestGreen,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { onExecuteSearch() }
+                                .testTag("execute_verse_search_button")
+                        ) {
+                            Text(
+                                text = "খুঁজুন",
+                                fontFamily = HindSiliguriFontFamily,
+                                fontSize = 12.sp,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(4.dp))
+                    }
+                    IconButton(
+                        onClick = { onSearchQueryChange("") },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(Icons.Filled.Close, contentDescription = "পরিষ্কার করুন", tint = MutedGray, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
+
+        // Quick Links Section ("কুইক লিংক")
+        Column(modifier = Modifier.padding(top = 10.dp, bottom = 6.dp)) {
+            Text(
+                text = "কুইক লিংক",
+                fontFamily = HindSiliguriFontFamily,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = ForestGreen,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+            )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                MushafEdition.entries.forEach { edition ->
-                    FilterChip(
-                        selected = prefs.mushafEdition == edition,
-                        onClick = { onSelectMushafEdition(edition) },
-                        label = { Text(edition.label, style = MaterialTheme.typography.labelMedium) }
-                    )
-                }
-            }
-
-            // Smart Search Bar (Surah, Juz, Page, 2:255, Topics, Text)
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = onSearchQueryChange,
-                placeholder = {
-                    Text(
-                        "Surah, Juz, 'page 255', '2:255', patience, Arabic...",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                trailingIcon = {
-                    if (searchQuery.isNotBlank()) {
-                        Button(
-                            onClick = {
-                                selectedTab = 3
-                                onExecuteSearch()
-                            },
-                            modifier = Modifier.padding(end = 4.dp)
-                        ) { Text("Find") }
+                QuranBengaliData.quickLinks.forEach { link ->
+                    Surface(
+                        color = ForestGreen,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                onOpenSurah(link.surahNumber, link.ayahNumber, link.pageNumber)
+                            }
+                            .testTag("quick_link_${link.id}")
+                    ) {
+                        Text(
+                            text = link.labelBn,
+                            fontFamily = HindSiliguriFontFamily,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                        )
                     }
-                },
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .testTag("quran_search_input"),
-            )
-
-            PrimaryScrollableTabRow(selectedTabIndex = selectedTab) {
-                tabs.forEachIndexed { idx, label ->
-                    Tab(
-                        selected = selectedTab == idx,
-                        onClick = { selectedTab = idx },
-                        text = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                    )
                 }
             }
+        }
 
-            when (selectedTab) {
-                // Tab 0: Surahs (114) with Favorites Filter & Start Page badge
-                0 -> {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        Row(
+        // TAB CONTENT
+        when (selectedTab) {
+            // Tab 0: সূরা
+            0 -> {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(filteredSurahs, key = { it.number }) { surah ->
+                        val bnInfo = QuranBengaliData.getSurahInfo(surah.number)
+                        val isMeccan = surah.revelationType.equals("Meccan", ignoreCase = true)
+                        val surahStartPage = QuranMetadata.startPageForSurah(surah.number, prefs.mushafEdition)
+                        Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                .testTag("surah_item_${surah.number}")
+                                .clickable { onOpenSurah(surah.number, 1, surahStartPage) },
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color.White,
+                            shadowElevation = 2.dp,
+                            border = BorderStroke(0.5.dp, Color(0xFFE3E7E4))
                         ) {
-                            FilterChip(
-                                selected = !onlyFavoriteSurahs,
-                                onClick = { onlyFavoriteSurahs = false },
-                                label = { Text("All 114 Surahs") }
-                            )
-                            FilterChip(
-                                selected = onlyFavoriteSurahs,
-                                onClick = { onlyFavoriteSurahs = true },
-                                leadingIcon = { Icon(Icons.Filled.Star, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                                label = { Text("Favorites (${prefs.favoriteSurahs.size})") }
-                            )
-                        }
-                        LazyColumn(
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(filteredSurahs, key = { it.number }) { surah ->
-                                val isFav = surah.number in prefs.favoriteSurahs
-                                Card(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("surah_item_${surah.number}")
-                                        .clickable { onOpenSurah(surah.number, 1, surah.startPage) },
-                                    shape = RoundedCornerShape(16.dp),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(14.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(40.dp)
-                                                .clip(CircleShape)
-                                                .background(MaterialTheme.colorScheme.primaryContainer),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                "${surah.number}",
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-                                        Spacer(Modifier.width(12.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = if (prefs.appLanguage == AppLanguage.BENGALI) {
-                                                    "${surah.englishName} (${surah.bengaliName})"
-                                                } else {
-                                                    surah.englishName
-                                                },
-                                                style = MaterialTheme.typography.titleMedium,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            Text(
-                                                text = "${surah.englishMeaning} • ${surah.ayahCount} Ayahs • p.${surah.startPage}",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                        Text(
-                                            text = surah.arabicName,
-                                            fontFamily = AmiriFontFamily,
-                                            fontSize = 22.sp,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                        IconButton(onClick = { onToggleFavoriteSurah(surah.number) }) {
-                                            Icon(
-                                                if (isFav) Icons.Filled.Star else Icons.Filled.StarBorder,
-                                                contentDescription = "Favorite Surah ${surah.englishName}",
-                                                tint = if (isFav) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Tab 1: Juz / Para (30) with Completed Juz Tracking
-                1 -> {
-                    LazyColumn(
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(filteredJuz, key = { it.number }) { juz ->
-                            val startSurah = QuranMetadata.getSurah(juz.startSurah)
-                            val endSurah = QuranMetadata.getSurah(juz.endSurah)
-                            val isDone = juz.number in prefs.completedJuz
-                            Card(
+                            Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { onOpenSurah(juz.startSurah, juz.startAyah, juz.startPage) },
-                                shape = RoundedCornerShape(16.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
+                                val isFav = surah.number in prefs.favoriteSurahs
+                                val isLastRead = surah.number == prefs.lastReadSurah
+                                SurahStarBadge(
+                                    numberText = QuranBengaliData.toBengaliDigits(surah.number),
+                                    ringColor = when {
+                                        isFav -> Color(0xFF1A66C2)
+                                        isLastRead -> ForestGreen
+                                        else -> Color(0xFF5A6560)
+                                    },
+                                    textColor = if (isFav) Color(0xFF1A66C2) else ForestGreen,
+                                    modifier = Modifier.clickable { onToggleFavoriteSurah(surah.number) }
+                                )
+                                Spacer(Modifier.width(14.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = bnInfo.nameBn,
+                                        fontFamily = HindSiliguriFontFamily,
+                                        fontSize = 16.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = TextCharcoal,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "${bnInfo.meaningBn} (${QuranBengaliData.toBengaliDigits(surah.ayahCount)})",
+                                        fontFamily = HindSiliguriFontFamily,
+                                        fontSize = 13.5.sp,
+                                        color = MutedGray,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                                 Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(14.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(40.dp)
-                                            .clip(CircleShape)
-                                            .background(
-                                                if (isDone) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer
-                                            ),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            "${juz.number}",
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isDone) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer
-                                        )
-                                    }
-                                    Spacer(Modifier.width(12.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            "Juz ${juz.number} • ${juz.englishName} (p.${juz.startPage})",
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Text(
-                                            "${startSurah.englishName} ${juz.startAyah} -> ${endSurah.englishName} ${juz.endAyah}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
+                                    SurahOriginIcon(isMeccan = isMeccan)
                                     Text(
-                                        juz.arabicName,
-                                        fontFamily = AmiriFontFamily,
-                                        fontSize = 18.sp,
-                                        color = MaterialTheme.colorScheme.primary
+                                        text = surah.arabicName,
+                                        fontFamily = LateefFontFamily,
+                                        fontSize = 23.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TextCharcoal
                                     )
-                                    IconButton(onClick = { onToggleCompletedJuz(juz.number) }) {
-                                        Icon(
-                                            Icons.Filled.CheckCircle,
-                                            contentDescription = "Mark Juz ${juz.number} completed",
-                                            tint = if (isDone) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                                        )
-                                    }
                                 }
                             }
                         }
                     }
                 }
+            }
 
-                // Tab 2: Bookmarks (Pages & Ayahs)
-                2 -> {
-                    if (pageBookmarks.isEmpty() && bookmarks.isEmpty()) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.padding(24.dp)
+            // Tab 1: পারা
+            1 -> {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(filteredJuz, key = { it.number }) { juz ->
+                        val bnJuz = QuranBengaliData.getJuzInfo(juz.number)
+                        val startSurahBn = QuranBengaliData.getSurahInfo(juz.startSurah)
+                        val endSurahBn = QuranBengaliData.getSurahInfo(juz.endSurah)
+                        val isDone = juz.number in prefs.completedJuz
+                        val juzStartPage = QuranMetadata.startPageForJuz(juz.number, prefs.mushafEdition)
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("juz_item_${juz.number}")
+                                .clickable { onOpenSurah(juz.startSurah, juz.startAyah, juzStartPage) },
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color.White,
+                            shadowElevation = 2.dp,
+                            border = BorderStroke(0.5.dp, Color(0xFFE3E7E4))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    Icons.Filled.Bookmark,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(48.dp),
-                                    tint = MaterialTheme.colorScheme.primary
+                                SurahStarBadge(
+                                    numberText = QuranBengaliData.toBengaliDigits(juz.number),
+                                    ringColor = if (isDone) ForestGreen else Color(0xFF5A6560)
                                 )
-                                Spacer(Modifier.height(8.dp))
-                                Text("No page or Ayah bookmarks yet", style = MaterialTheme.typography.titleMedium)
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "পারা ${QuranBengaliData.toBengaliDigits(juz.number)} • ${bnJuz.nameBn}",
+                                        fontFamily = HindSiliguriFontFamily,
+                                        fontSize = 15.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = TextCharcoal
+                                    )
+                                    Text(
+                                        text = "${startSurahBn.nameBn} (${QuranBengaliData.toBengaliDigits(juz.startAyah)}) → ${endSurahBn.nameBn} (${QuranBengaliData.toBengaliDigits(juz.endAyah)}) • পৃ. ${QuranBengaliData.toBengaliDigits(juzStartPage)}",
+                                        fontFamily = HindSiliguriFontFamily,
+                                        fontSize = 12.5.sp,
+                                        color = MutedGray,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                                 Text(
-                                    "Bookmark any Mushaf page or Ayah while reading to jump back instantly.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    text = juz.arabicName,
+                                    fontFamily = LateefFontFamily,
+                                    fontSize = 21.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ForestGreen
                                 )
-                            }
-                        }
-                    } else {
-                        LazyColumn(
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            if (pageBookmarks.isNotEmpty()) {
-                                item {
-                                    Text(
-                                        "Saved Mushaf Pages (${pageBookmarks.size})",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
+                                IconButton(onClick = { onToggleCompletedJuz(juz.number) }) {
+                                    Icon(
+                                        Icons.Filled.CheckCircle,
+                                        contentDescription = "পারা সম্পন্ন চিহ্নিত করুন",
+                                        tint = if (isDone) ForestGreen else Color(0xFFBDC5C0)
                                     )
-                                }
-                                items(pageBookmarks, key = { "page_${it.pageNumber}" }) { pBm ->
-                                    Card(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable { onOpenSurah(1, 1, pBm.pageNumber) },
-                                        shape = RoundedCornerShape(14.dp),
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().padding(14.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(Icons.Filled.Bookmark, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
-                                            Spacer(Modifier.width(10.dp))
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text("Mushaf Page ${pBm.pageNumber}", fontWeight = FontWeight.Bold)
-                                                Text(pBm.title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            }
-                                            IconButton(onClick = { onDeletePageBookmark(pBm.pageNumber) }) {
-                                                Icon(Icons.Filled.Delete, contentDescription = "Remove page bookmark")
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            if (bookmarks.isNotEmpty()) {
-                                item {
-                                    Text(
-                                        "Saved Ayah Bookmarks (${bookmarks.size})",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(top = 6.dp)
-                                    )
-                                }
-                                items(bookmarks, key = { "${it.surahNumber}:${it.ayahNumber}" }) { bm ->
-                                    Card(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable { onOpenSurah(bm.surahNumber, bm.ayahNumber, null) },
-                                        shape = RoundedCornerShape(14.dp),
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().padding(14.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text("${bm.surahName} (${bm.surahNumber}:${bm.ayahNumber})", fontWeight = FontWeight.Bold)
-                                                if (bm.note.isNotBlank()) {
-                                                    Text(
-                                                        "Note: ${bm.note}",
-                                                        style = MaterialTheme.typography.bodySmall,
-                                                        color = MaterialTheme.colorScheme.primary
-                                                    )
-                                                }
-                                            }
-                                            IconButton(onClick = { onDeleteBookmark(bm.surahNumber, bm.ayahNumber) }) {
-                                                Icon(Icons.Filled.Delete, contentDescription = "Delete bookmark")
-                                            }
-                                        }
-                                    }
                                 }
                             }
                         }
                     }
                 }
+            }
 
-                // Tab 3: Smart Quran Search (Topics + Page + Surah:Ayah + Arabic + Translation)
-                3 -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Button(
-                                onClick = onExecuteSearch,
-                                modifier = Modifier.testTag("execute_verse_search_button")
-                            ) { Text("Search Quran") }
-                            Text(
-                                "Try: 2:255, page 582, mercy, patience",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        Text("Explore by Topic", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+            // Tab 2: বিষয়ভিত্তিক (Topics + Ayah Search)
+            else -> {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    item {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -663,162 +597,131 @@ fun QuranHubScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             QuranMetadata.topics.forEach { topic ->
-                                FilterChip(
-                                    selected = searchQuery.equals(topic.id, ignoreCase = true),
-                                    onClick = {
+                                val bnTopic = QuranBengaliData.topicLabelsBn[topic.id]
+                                val isSel = searchQuery.equals(topic.id, ignoreCase = true)
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSel) ForestGreen else Color.White,
+                                    border = BorderStroke(1.dp, ForestGreen.copy(alpha = 0.45f)),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            onSearchQueryChange(topic.id)
+                                            onExecuteSearch()
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.AutoAwesome,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp),
+                                            tint = if (isSel) Color.White else ForestGreen
+                                        )
+                                        Text(
+                                            text = bnTopic?.titleBn ?: topic.title,
+                                            fontFamily = HindSiliguriFontFamily,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = if (isSel) Color.White else ForestGreen
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (isSearching) {
+                        item {
+                            Box(
+                                modifier = Modifier.fillMaxWidth().padding(24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(color = ForestGreen)
+                            }
+                        }
+                    } else if (searchResults.isNotEmpty()) {
+                        items(searchResults, key = { "sr_${it.surahNumber}:${it.ayahNumber}" }) { item ->
+                            val bnSurah = QuranBengaliData.getSurahInfo(item.surahNumber)
+                            val displayPage = if (QuranMetadata.isHafizi611Edition(prefs.mushafEdition)) {
+                                QuranMetadata.hafiziPageForSurahAndMadani(item.surahNumber, item.ayahNumber, item.page)
+                            } else {
+                                item.page
+                            }
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onOpenSurah(item.surahNumber, item.ayahNumber, displayPage) },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color.White),
+                                border = BorderStroke(0.5.dp, Color(0xFFE3E7E4))
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = "${bnSurah.nameBn} (${QuranBengaliData.toBengaliDigits(item.surahNumber)}:${QuranBengaliData.toBengaliDigits(item.ayahNumber)}) • পৃ. ${QuranBengaliData.toBengaliDigits(displayPage)}",
+                                        fontFamily = HindSiliguriFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        color = ForestGreen
+                                    )
+                                    if (item.uthmaniText.isNotBlank()) {
+                                        Text(
+                                            text = item.uthmaniText,
+                                            fontFamily = LateefFontFamily,
+                                            fontSize = 22.sp,
+                                            color = TextCharcoal,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                    Text(
+                                        text = item.translationText,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = TextCharcoal
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        items(QuranMetadata.topics, key = { "topic_card_${it.id}" }) { topic ->
+                            val bnTopic = QuranBengaliData.topicLabelsBn[topic.id]
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
                                         onSearchQueryChange(topic.id)
                                         onExecuteSearch()
                                     },
-                                    leadingIcon = { Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(14.dp)) },
-                                    label = { Text(topic.title) }
-                                )
-                            }
-                        }
-
-                        if (isSearching) {
-                            Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator()
-                            }
-                        } else {
-                            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                items(searchResults, key = { "${it.surahNumber}:${it.ayahNumber}" }) { item ->
-                                    val sMeta = QuranMetadata.getSurah(item.surahNumber)
-                                    Card(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable { onOpenSurah(item.surahNumber, item.ayahNumber, item.page) },
-                                        shape = RoundedCornerShape(14.dp),
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                                    ) {
-                                        Column(
-                                            modifier = Modifier.padding(14.dp),
-                                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Text(
-                                                "${sMeta.englishName} (${item.surahNumber}:${item.ayahNumber}) • Mushaf p.${item.page}",
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                            if (item.uthmaniText.isNotBlank()) {
-                                                Text(
-                                                    item.uthmaniText,
-                                                    fontFamily = AmiriFontFamily,
-                                                    fontSize = 20.sp,
-                                                    modifier = Modifier.fillMaxWidth()
-                                                )
-                                            }
-                                            Text(item.translationText, style = MaterialTheme.typography.bodyMedium)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Tab 4: Offline Quran Text & Audio Download Manager
-                else -> {
-                    val downloadedBySurah = remember(downloadedAudio, selectedQari.id) {
-                        downloadedAudio
-                            .filter { it.qariId == selectedQari.id }
-                            .groupBy { it.surahNumber }
-                    }
-                    LazyColumn(
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        item {
-                            Card(
-                                shape = RoundedCornerShape(18.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Icon(Icons.Filled.Storage, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                        Text("Offline Quran & Audio Storage", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                    }
-                                    Text(
-                                        "Cached Text: $cachedPageCount / 604 Mushaf pages ($cachedAyahCount Ayahs)\n" +
-                                            "Audio Downloaded: $downloadedAudioMb (${selectedQari.name})\n" +
-                                            "Available Device Storage: $availableStorageMb MB",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    if (offlineBatchStatus != null) {
-                                        Text(offlineBatchStatus, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-                                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                                    }
-                                    audioState.downloadProgressText?.let { prog ->
-                                        Text(prog, color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.labelMedium)
-                                    }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Button(
-                                            onClick = { onPrefetchSurahsOffline((78..114).toList()) },
-                                            enabled = offlineBatchStatus == null
-                                        ) {
-                                            Icon(Icons.Filled.CloudDone, contentDescription = null, modifier = Modifier.size(16.dp))
-                                            Spacer(Modifier.width(4.dp))
-                                            Text("Cache Juz Amma (78-114)")
-                                        }
-                                        OutlinedButton(
-                                            onClick = { onPrefetchSurahsOffline(listOf(1, 18, 36, 55, 67, 78)) },
-                                            enabled = offlineBatchStatus == null
-                                        ) {
-                                            Text("Essential Surahs")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        item {
-                            Text(
-                                "Audio Downloads (${selectedQari.name})",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-
-                        items(
-                            items = QuranMetadata.surahs.filter {
-                                it.number in listOf(1, 18, 36, 55, 56, 67) || it.number >= 78 || it.number in downloadedBySurah
-                            },
-                            key = { "dl_${it.number}" }
-                        ) { surah ->
-                            val count = downloadedBySurah[surah.number]?.size ?: 0
-                            val complete = count >= surah.ayahCount
-                            Card(
-                                shape = RoundedCornerShape(14.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color.White,
+                                shadowElevation = 1.dp,
+                                border = BorderStroke(0.5.dp, Color(0xFFE3E7E4))
                             ) {
                                 Row(
-                                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(14.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
+                                    Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = ForestGreen)
+                                    Spacer(Modifier.width(12.dp))
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("${surah.number}. ${surah.englishName}", fontWeight = FontWeight.Bold)
                                         Text(
-                                            if (complete) "Offline Ready (${surah.ayahCount} Ayahs)" else "$count / ${surah.ayahCount} Ayahs cached",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (complete) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            text = bnTopic?.titleBn ?: topic.title,
+                                            fontFamily = HindSiliguriFontFamily,
+                                            fontSize = 15.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = TextCharcoal
                                         )
-                                    }
-                                    if (count > 0) {
-                                        IconButton(onClick = { onDeleteSurahAudio(selectedQari.id, surah.number) }) {
-                                            Icon(Icons.Filled.Delete, contentDescription = "Delete downloaded audio")
-                                        }
-                                    }
-                                    IconButton(onClick = { onDownloadSurahAudio(surah.number, selectedQari) }) {
-                                        Icon(
-                                            if (complete) Icons.Filled.CheckCircle else Icons.Filled.Download,
-                                            contentDescription = "Download ${surah.englishName} audio",
-                                            tint = MaterialTheme.colorScheme.primary
+                                        Text(
+                                            text = bnTopic?.subtitleBn ?: topic.subtitle,
+                                            fontFamily = HindSiliguriFontFamily,
+                                            fontSize = 12.5.sp,
+                                            color = MutedGray
                                         )
                                     }
                                 }
@@ -830,3 +733,12 @@ fun QuranHubScreen(
         }
     }
 }
+
+private fun normalizeToAsciiDigits(input: String): String =
+    input.map { ch ->
+        when (ch) {
+            in '০'..'৯' -> ('0' + (ch - '০'))
+            in '٠'..'٩' -> ('0' + (ch - '٠'))
+            else -> ch
+        }
+    }.joinToString("")

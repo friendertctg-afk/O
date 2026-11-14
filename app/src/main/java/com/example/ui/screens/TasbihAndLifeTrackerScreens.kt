@@ -417,9 +417,10 @@ fun DailyLifeTrackerScreen(
                                 onMinus = { onIncrementFasting(-1) },
                                 onPlus = { onIncrementFasting(1) }
                             )
+                            val totalKhatamPages = com.example.data.seed.QuranMetadata.totalPagesForEdition(prefs.mushafEdition)
                             TrackerCounterRow(
-                                title = "Quran Khatam Progress (604 Pages)",
-                                valueText = "${prefs.khatamPagesRead} / 604 pages",
+                                title = "Quran Khatam Progress ($totalKhatamPages Pages)",
+                                valueText = "${prefs.khatamPagesRead.coerceAtMost(totalKhatamPages)} / $totalKhatamPages pages",
                                 onMinus = { onIncrementKhatam(-1) },
                                 onPlus = { onIncrementKhatam(2) }
                             )

@@ -574,7 +574,8 @@ fun HomeScreen(
                                 WorshipStatMini("Daily Prayers", "${prefs.completedDailyPrayers.size}/5")
                                 WorshipStatMini("Tasbih Total", "${prefs.totalTasbihCount}")
                                 WorshipStatMini("Hifz Ayahs", "$totalHifzAyahs")
-                                WorshipStatMini("Khatam", "${prefs.khatamPagesRead}/604")
+                                val khatamTotalPages = com.example.data.seed.QuranMetadata.totalPagesForEdition(prefs.mushafEdition)
+                                WorshipStatMini("Khatam", "${prefs.khatamPagesRead.coerceAtMost(khatamTotalPages)}/$khatamTotalPages")
                             }
                             LinearProgressIndicator(
                                 progress = { (prefs.completedDailyPrayers.size / 5f).coerceIn(0f, 1f) },

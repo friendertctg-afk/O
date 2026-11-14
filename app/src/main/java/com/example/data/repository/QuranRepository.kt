@@ -5,8 +5,10 @@ import android.util.Log
 import com.example.data.local.AppDao
 import com.example.data.local.CachedAyahEntity
 import com.example.data.local.CachedTranslationEntity
+import com.example.data.local.MushafEdition
 import com.example.data.remote.NetworkModule
 import com.example.data.seed.QuranMetadata
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -74,20 +76,28 @@ class QuranRepository(
     fun observePageAyahs(
         pageNumber: Int,
         translationEdition: String,
+        mushafEdition: MushafEdition = MushafEdition.MADANI,
     ): Flow<List<AyahDisplayItem>> {
-        val clampedPage = pageNumber.coerceIn(1, QuranMetadata.TOTAL_MUSHAF_PAGES)
+        val isHafizi611 = QuranMetadata.isHafizi611Edition(mushafEdition)
+        val total = QuranMetadata.totalPagesForEdition(mushafEdition)
+        val clampedPage = pageNumber.coerceIn(1, total)
+        val madaniPage = if (isHafizi611) {
+            QuranMetadata.resolveHafiziPageSlice(clampedPage).madaniPage
+        } else {
+            clampedPage
+        }
         return combine(
-            dao.observePageAyahs(clampedPage),
-            dao.observePageTranslations(clampedPage, translationEdition),
+            dao.observePageAyahs(madaniPage),
+            dao.observePageTranslations(madaniPage, translationEdition),
         ) { ayahs, translations ->
             val transMap = translations.associateBy { it.surahNumber to it.ayahNumber }
-            ayahs.map { a ->
+            val mapped = ayahs.map { a ->
                 AyahDisplayItem(
                     surahNumber = a.surahNumber,
                     ayahNumber = a.ayahNumber,
                     globalNumber = a.globalNumber,
                     juz = a.juz,
-                    page = a.page,
+                    page = if (isHafizi611) clampedPage else a.page,
                     uthmaniText = a.uthmaniText,
                     simpleText = a.simpleText,
                     tajweedMarkup = a.tajweedMarkup,
@@ -96,22 +106,42 @@ class QuranRepository(
                     ruku = a.ruku,
                 )
             }
+            if (isHafizi611) {
+                QuranMetadata.sliceItemsForHafiziPage(clampedPage, mapped) { it.surahNumber }
+            } else {
+                mapped
+            }
         }
     }
 
-    suspend fun resolvePageForAyah(surahNumber: Int, ayahNumber: Int): Int =
-        withContext(Dispatchers.IO) {
-            ensureStarterSeeded()
-            dao.getPageForAyah(surahNumber, ayahNumber)
-                ?: QuranMetadata.startPageForSurah(surahNumber)
+    suspend fun resolvePageForAyah(
+        surahNumber: Int,
+        ayahNumber: Int,
+        mushafEdition: MushafEdition = MushafEdition.MADANI,
+    ): Int = withContext(Dispatchers.IO) {
+        ensureStarterSeeded()
+        val madaniPage = dao.getPageForAyah(surahNumber, ayahNumber)
+            ?: QuranMetadata.startPageForSurah(surahNumber)
+        if (QuranMetadata.isHafizi611Edition(mushafEdition)) {
+            QuranMetadata.hafiziPageForSurahAndMadani(surahNumber, ayahNumber, madaniPage)
+        } else {
+            madaniPage
         }
+    }
 
     suspend fun loadPageIfNeeded(
         pageNumber: Int,
         translationEdition: String,
+        mushafEdition: MushafEdition = MushafEdition.MADANI,
     ): Result<Unit> = withContext(Dispatchers.IO) {
         ensureStarterSeeded()
-        val page = pageNumber.coerceIn(1, QuranMetadata.TOTAL_MUSHAF_PAGES)
+        val total = QuranMetadata.totalPagesForEdition(mushafEdition)
+        val clamped = pageNumber.coerceIn(1, total)
+        val page = if (QuranMetadata.isHafizi611Edition(mushafEdition)) {
+            QuranMetadata.resolveHafiziPageSlice(clamped).madaniPage
+        } else {
+            clamped
+        }
         val existingAyahs = dao.getPageAyahs(page)
         val existingTrans = dao.getPageTranslations(page, translationEdition)
 
@@ -324,13 +354,18 @@ class QuranRepository(
                 }
             }
 
-            // 2. Direct Mushaf Page lookup e.g. "page 255", "p.1", "p 604"
+            // 2. Direct Mushaf Page lookup e.g. "page 255", "p.1", "p 611"
             val pageRegex = Regex("^(?:page|p\\.?|صفحة)\\s*(\\d{1,3})$", RegexOption.IGNORE_CASE)
             pageRegex.matchEntire(trimmed)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { pNum ->
-                if (pNum in 1..QuranMetadata.TOTAL_MUSHAF_PAGES) {
-                    loadPageIfNeeded(pNum, edition)
-                    val pAyahs = dao.getPageAyahs(pNum)
-                    val pTrans = dao.getPageTranslations(pNum, edition).associateBy { it.surahNumber to it.ayahNumber }
+                if (pNum in 1..QuranMetadata.TOTAL_HAFIZI_PAGES) {
+                    val madaniPage = if (pNum > QuranMetadata.TOTAL_MUSHAF_PAGES) {
+                        QuranMetadata.resolveHafiziPageSlice(pNum).madaniPage
+                    } else {
+                        pNum
+                    }
+                    loadPageIfNeeded(madaniPage, edition)
+                    val pAyahs = dao.getPageAyahs(madaniPage)
+                    val pTrans = dao.getPageTranslations(madaniPage, edition).associateBy { it.surahNumber to it.ayahNumber }
                     if (pAyahs.isNotEmpty()) {
                         return@withContext pAyahs.map { ayah ->
                             AyahDisplayItem(
@@ -338,7 +373,7 @@ class QuranRepository(
                                 ayahNumber = ayah.ayahNumber,
                                 globalNumber = ayah.globalNumber,
                                 juz = ayah.juz,
-                                page = ayah.page,
+                                page = pNum,
                                 uthmaniText = ayah.uthmaniText,
                                 simpleText = ayah.simpleText,
                                 tajweedMarkup = ayah.tajweedMarkup,

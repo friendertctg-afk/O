@@ -66,8 +66,8 @@ enum class MushafEdition(
         "HAFIZI",
         "Hafizi 15-Line",
         "مصحف الحفاظ",
-        "Hafizi • ١٥ سطراً",
-        "Traditional South Asian & Hifz Mushaf layout with ornamental emerald-gold border, Juz/Ruku markers, and page numbers."
+        "Hafizi • 611p • ١٥ سطراً",
+        "Traditional South Asian & Emdadia 611-page 15-line Hifz Mushaf layout with ornamental border, Juz/Ruku markers, and Manzil footer."
     ),
     MADANI(
         "MADANI",
@@ -107,7 +107,7 @@ enum class MushafEdition(
 data class UserPreferencesState(
     val themePreset: IslamicThemePreset = IslamicThemePreset.EMERALD_GOLD,
     val appLanguage: AppLanguage = AppLanguage.ENGLISH,
-    val arabicFont: ArabicFontChoice = ArabicFontChoice.SCHEHERAZADE,
+    val arabicFont: ArabicFontChoice = ArabicFontChoice.LATEEF,
     val arabicFontSizeSp: Float = 26f,
     val readingMode: QuranReadingMode = QuranReadingMode.LIGHT,
     val quranScript: QuranScriptType = QuranScriptType.UTHMANI,
@@ -338,7 +338,7 @@ class PreferencesRepository(private val context: Context) {
 
     suspend fun setLastReadPage(page: Int, surah: Int? = null, ayah: Int? = null) {
         context.dataStore.edit {
-            it[Keys.LAST_READ_PAGE] = page.coerceIn(1, 604)
+            it[Keys.LAST_READ_PAGE] = page.coerceIn(1, com.example.data.seed.QuranMetadata.TOTAL_HAFIZI_PAGES)
             if (surah != null) it[Keys.LAST_READ_SURAH] = surah.coerceIn(1, 114)
             if (ayah != null) it[Keys.LAST_READ_AYAH] = ayah.coerceAtLeast(1)
         }
@@ -349,7 +349,14 @@ class PreferencesRepository(private val context: Context) {
             it[Keys.MUSHAF_EDITION] = edition.key
             when (edition) {
                 MushafEdition.TAJWEED -> it[Keys.QURAN_SCRIPT] = QuranScriptType.TAJWEED.key
-                MushafEdition.INDO_PAK -> it[Keys.QURAN_SCRIPT] = QuranScriptType.INDO_PAK.key
+                MushafEdition.INDO_PAK -> {
+                    it[Keys.QURAN_SCRIPT] = QuranScriptType.INDO_PAK.key
+                    it[Keys.ARABIC_FONT] = ArabicFontChoice.LATEEF.key
+                }
+                MushafEdition.HAFIZI -> {
+                    it[Keys.QURAN_SCRIPT] = QuranScriptType.UTHMANI.key
+                    it[Keys.ARABIC_FONT] = ArabicFontChoice.LATEEF.key
+                }
                 else -> it[Keys.QURAN_SCRIPT] = QuranScriptType.UTHMANI.key
             }
         }
@@ -514,7 +521,7 @@ class PreferencesRepository(private val context: Context) {
     suspend fun incrementKhatamPages(delta: Int = 1) {
         context.dataStore.edit { prefs ->
             val current = prefs[Keys.KHATAM_PAGES] ?: 0
-            prefs[Keys.KHATAM_PAGES] = (current + delta).coerceIn(0, 604)
+            prefs[Keys.KHATAM_PAGES] = (current + delta).coerceIn(0, com.example.data.seed.QuranMetadata.TOTAL_HAFIZI_PAGES)
         }
     }
 

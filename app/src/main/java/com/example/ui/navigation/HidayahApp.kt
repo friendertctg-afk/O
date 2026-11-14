@@ -328,6 +328,7 @@ fun HidayahApp() {
                                             },
                                             onSelectMushafEdition = mainVm::setMushafEdition,
                                             onSetLayout = mainVm::setQuranLayout,
+                                            onSetShowTranslation = mainVm::setShowTranslation,
                                             onToggleFavoriteSurah = mainVm::toggleFavoriteSurah,
                                             onToggleCompletedJuz = mainVm::toggleCompletedJuz,
                                             onIncrementKhatamPage = { mainVm.incrementKhatamPages(1) },
@@ -339,7 +340,8 @@ fun HidayahApp() {
                                             onDownloadSurahAudio = { sNum, qari ->
                                                 mainVm.downloadSurahAudio(sNum, qari) {}
                                             },
-                                            onDeleteSurahAudio = mainVm::deleteDownloadedSurahAudio
+                                            onDeleteSurahAudio = mainVm::deleteDownloadedSurahAudio,
+                                            onBackToHome = { navigateTopTab(HidayahRoutes.HOME) }
                                         )
                                     }
 
@@ -353,14 +355,17 @@ fun HidayahApp() {
                                     ) { entry ->
                                         val surahNum = entry.arguments?.getInt("surahNumber") ?: 1
                                         val ayahNum = entry.arguments?.getInt("ayah") ?: 1
-                                        val explicitPage = entry.arguments?.getInt("page")?.takeIf { it in 1..604 }
+                                        val explicitPage = entry.arguments?.getInt("page")?.takeIf {
+                                            it in 1..com.example.data.seed.QuranMetadata.TOTAL_HAFIZI_PAGES
+                                        }
 
-                                        LaunchedEffect(surahNum, ayahNum, explicitPage, prefs.translationEdition) {
+                                        LaunchedEffect(surahNum, ayahNum, explicitPage, prefs.translationEdition, prefs.mushafEdition) {
                                             quranVm.openSurahAndResolvePage(
                                                 surahNum = surahNum,
                                                 ayahNum = ayahNum,
                                                 explicitPage = explicitPage,
-                                                edition = prefs.translationEdition
+                                                edition = prefs.translationEdition,
+                                                mushafEdition = prefs.mushafEdition
                                             )
                                         }
                                         val ayahs by quranVm.ayahsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
@@ -379,9 +384,9 @@ fun HidayahApp() {
                                             favoriteQariIds = favQaris,
                                             downloadedAudio = downloadedAudio,
                                             audioState = audioState,
-                                            observePage = { p -> quranVm.observePage(p, prefs.translationEdition) },
-                                            onEnsurePageLoaded = { p -> quranVm.ensurePageLoaded(p, prefs.translationEdition) },
-                                            onJumpToPage = { p -> quranVm.selectPage(p, prefs.translationEdition) },
+                                            observePage = { p -> quranVm.observePage(p, prefs.translationEdition, prefs.mushafEdition) },
+                                            onEnsurePageLoaded = { p -> quranVm.ensurePageLoaded(p, prefs.translationEdition, prefs.mushafEdition) },
+                                            onJumpToPage = { p -> quranVm.selectPage(p, prefs.translationEdition, prefs.mushafEdition) },
                                             onBack = { navController.popBackStack() },
                                             onSelectSurah = { next ->
                                                 navController.navigate(HidayahRoutes.quranReader(next, 1)) {

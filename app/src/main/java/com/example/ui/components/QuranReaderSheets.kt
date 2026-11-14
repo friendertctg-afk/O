@@ -429,6 +429,7 @@ fun QariAndAudioSheet(
 fun JumpToMushafDialog(
     currentPage: Int,
     currentSurah: Int,
+    totalPages: Int = QuranMetadata.TOTAL_MUSHAF_PAGES,
     onDismiss: () -> Unit,
     onJumpToPage: (Int) -> Unit,
     onJumpToSurahAyah: (Int, Int) -> Unit,
@@ -449,7 +450,7 @@ fun JumpToMushafDialog(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    FilterChip(selected = mode == 0, onClick = { mode = 0 }, label = { Text("Page (1-604)") })
+                    FilterChip(selected = mode == 0, onClick = { mode = 0 }, label = { Text("Page (1-$totalPages)") })
                     FilterChip(selected = mode == 1, onClick = { mode = 1 }, label = { Text("Surah : Ayah") })
                     FilterChip(selected = mode == 2, onClick = { mode = 2 }, label = { Text("Juz (1-30)") })
                 }
@@ -458,7 +459,7 @@ fun JumpToMushafDialog(
                     0 -> OutlinedTextField(
                         value = pageInput,
                         onValueChange = { pageInput = it },
-                        label = { Text("Mushaf Page Number (1..604)") },
+                        label = { Text("Mushaf Page Number (1..$totalPages)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
@@ -496,7 +497,7 @@ fun JumpToMushafDialog(
             Button(onClick = {
                 when (mode) {
                     0 -> {
-                        val p = (pageInput.toIntOrNull() ?: currentPage).coerceIn(1, 604)
+                        val p = (pageInput.toIntOrNull() ?: currentPage).coerceIn(1, totalPages)
                         onJumpToPage(p)
                     }
                     1 -> {

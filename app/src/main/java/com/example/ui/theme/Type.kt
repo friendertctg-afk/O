@@ -15,6 +15,30 @@ val PlusJakartaSansFamily = FontFamily(
     Font(R.font.plus_jakarta_sans, FontWeight.Bold),
 )
 
+val HindSiliguriFontFamily = FontFamily(
+    Font(R.font.hind_siliguri, FontWeight.Normal),
+    Font(R.font.hind_siliguri, FontWeight.Medium),
+    Font(R.font.hind_siliguri, FontWeight.SemiBold),
+    Font(R.font.hind_siliguri, FontWeight.Bold),
+)
+
+val NotoSansBengaliFontFamily = FontFamily(
+    Font(R.font.noto_sans_bengali, FontWeight.Normal),
+    Font(R.font.noto_sans_bengali, FontWeight.Bold),
+)
+
+val LateefFontFamily = FontFamily(
+    Font(R.font.lateef, FontWeight.Normal),
+)
+
+val GulzarFontFamily = FontFamily(
+    Font(R.font.gulzar, FontWeight.Normal),
+)
+
+val NotoNastaliqUrduFontFamily = FontFamily(
+    Font(R.font.noto_nastaliq_urdu, FontWeight.Normal),
+)
+
 val AmiriFontFamily = FontFamily(
     Font(R.font.amiri, FontWeight.Normal),
 )
@@ -28,6 +52,9 @@ val NotoNaskhArabicFontFamily = FontFamily(
 )
 
 fun ArabicFontChoice.toFontFamily(): FontFamily = when (this) {
+    ArabicFontChoice.LATEEF -> LateefFontFamily
+    ArabicFontChoice.GULZAR -> GulzarFontFamily
+    ArabicFontChoice.NOTO_NASTALIQ -> NotoNastaliqUrduFontFamily
     ArabicFontChoice.AMIRI -> AmiriFontFamily
     ArabicFontChoice.SCHEHERAZADE -> ScheherazadeFontFamily
     ArabicFontChoice.NOTO_NASKH -> NotoNaskhArabicFontFamily

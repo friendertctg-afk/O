@@ -190,13 +190,16 @@ enum class IslamicThemePreset(
 }
 
 enum class ArabicFontChoice(val key: String, val displayName: String) {
+    LATEEF("LATEEF", "Lateef (Indo-Pak Quranic)"),
+    GULZAR("GULZAR", "Gulzar (Nastaliq Quran)"),
+    NOTO_NASTALIQ("NOTO_NASTALIQ", "Noto Nastaliq Urdu"),
+    SCHEHERAZADE("SCHEHERAZADE", "Scheherazade New (Madani)"),
     AMIRI("AMIRI", "Amiri (Classic Naskh)"),
-    SCHEHERAZADE("SCHEHERAZADE", "Scheherazade New (Quranic)"),
     NOTO_NASKH("NOTO_NASKH", "Noto Naskh Arabic");
 
     companion object {
         fun fromKey(key: String?): ArabicFontChoice =
-            entries.firstOrNull { it.key == key } ?: SCHEHERAZADE
+            entries.firstOrNull { it.key == key } ?: LATEEF
     }
 }
 
